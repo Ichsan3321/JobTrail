@@ -20,7 +20,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const JobTrailApp());
     expect(
-      tester.getSize(find.byType(FilledButton)).height,
+      tester.getSize(find.byKey(const ValueKey('home-add'))).height,
       greaterThanOrEqualTo(48),
     );
   });
@@ -59,7 +59,7 @@ void main() {
     'edit uses same ID and cancel restores detail; add cancel restores origin',
     (tester) async {
       await tester.pumpWidget(const JobTrailApp());
-      await tester.tap(find.text('Tambah Lamaran'));
+      await tester.tap(find.byKey(const ValueKey('home-add')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('S04')), findsOneWidget);
       await tester.tap(find.text('Batal'));
@@ -86,7 +86,7 @@ void main() {
     final navigation = tester
         .widget<AppShell>(find.byType(AppShell))
         .navigation;
-    await tester.tap(find.text('Tambah Lamaran'));
+    await tester.tap(find.byKey(const ValueKey('home-add')));
     await tester.pumpAndSettle();
     final id = store.addApplication(draft());
     navigation.finishForm(id); // Contract test; placeholder has no save UI.
@@ -161,7 +161,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Demo Baru'), findsOneWidget);
     await selectTab(tester, 'home');
-    expect(find.text('1 lamaran · data demo in-memory'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('home-total'))).data,
+      '1',
+    );
     await selectTab(tester, 'statistics');
     expect(find.text('Total: 1'), findsOneWidget);
   });
