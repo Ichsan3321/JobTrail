@@ -17,7 +17,9 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: navigation,
     builder: (context, _) => Scaffold(
-      appBar: AppBar(title: const Text('JobTrail')),
+      appBar: navigation.selectedTab == AppTab.home
+          ? null
+          : AppBar(title: const Text('JobTrail')),
       body: SafeArea(
         child: IndexedStack(
           index: navigation.selectedTab.index,

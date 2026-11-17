@@ -57,6 +57,7 @@ flutter:
   # the material Icons class.
   uses-material-design: true
   assets:
+    - assets/home/
     - assets/fonts/poppins/OFL.txt
     - assets/fonts/plus_jakarta_sans/OFL.txt
   fonts:
