@@ -1,11 +1,26 @@
 # JobTrail | AGENTS.md
 
-**Versi 2.0 · Week 12 · 17 November 2026**  
+**Versi 2.1 · Week 12 · 17 November 2026**  
 **TEKBER A, Kelompok 1, Institut Teknologi Sepuluh Nopember**  
 **Koordinator/integrator: Ichsan Ramadhan**  
 **Fase aktif:** persiapan fondasi bersama dan implementasi frontend Flutter.
 
 > BACA SEBELUM MENGERJAKAN APA PUN. File ini berlaku untuk Codex, Claude Code, Gemini, Cursor, ChatGPT, Google AI Studio, dan asisten AI lain yang dipakai anggota. Tujuannya adalah menghasilkan satu aplikasi JobTrail, satu arsitektur, satu dataset, satu design system, dan satu laporan; bukan tujuh project terpisah. Week 12 di sini adalah rencana internal berdasarkan progres Week 11; instruksi resmi Week 12 dan deadline harus dikonfirmasi. Jangan menganggap seluruh target dalam file ini sebagai syarat resmi dosen.
+
+## 0. Bootstrap otomatis untuk anggota (tanpa prompt terpisah)
+
+**Jika file ini dibaca/diunggah pertama kali, atau pengguna hanya berkata "mulai", aktifkan onboarding JobTrail, bukan sekadar membuat ringkasan.** Jika PIC belum diketahui, tanyakan satu pertanyaan nama/nama panggilan anggota (Ichsan, Hanif, Lenno, Rifqi, Fachriza, Farhad, Ziyaad). Jika diketahui, gunakan tabel kepemilikan di bawah untuk menentukan branch, folder, Figma node dan tugas. Jangan minta ulang detail yang sudah ada. Beri rekomendasi model/effort sesuai kompleksitas dan produk yang dipakai (coding lokal Medium, revisi kecil Low, integrasi sulit baru Medium/High; Git manual tidak memerlukan AI). Jangan menjanjikan pemakaian token.
+
+- Jika workspace belum ada, pastikan undangan collaborator diterima dan Flutter/Git tersedia (`flutter doctor`, `git --version`). Bila punya terminal dan izin, clone repo `https://github.com/Ichsan3321/JobTrail.git` di folder kerja yang aman, atau arahkan pengguna menjalankannya. Jangan clone ulang project existing.
+- Checkout branch milik PIC, bukan main/develop: `git fetch origin`, `git switch --track origin/feature/board` (contoh Hanif; sesuaikan PIC), `git merge --ff-only origin/develop`, `git status -sb`. Jika branch lokal sudah ada gunakan `git switch feature/board` sesuai PIC. Jika divergen/conflict jangan reset/force-push; periksa dan koordinasikan. Jangan otomatis mengubah remote.
+- Baca AGENTS.md, kontrak aktual, dan kode relevan di workspace sebelum mengedit. Jalankan `flutter pub get`, `flutter analyze`, `flutter test`. Preview via `flutter run -d chrome`, atau `flutter run -d web-server --web-hostname=127.0.0.1 --web-port=8080`. Gunakan viewport 393 × 852.
+- Gunakan Figma MCP/connector read-only bila tersedia. Jika Codex belum tersambung, instruksikan `codex mcp list` dan `codex mcp add figma --url https://mcp.figma.com/mcp` serta login resmi jika diminta. Jika connector gagal, pandu anggota mengambil screenshot frame sesuai tugas, jangan menebak desain. AI web hanya bisa memberi kode/patch dan perintah manual jika tidak mempunyai akses workspace; minta konteks file secara bertahap, bukan semua lampiran sebelum onboarding.
+- Pilih task berikutnya dari live Master Spreadsheet (lihat Link utama). Kerjakan screen sendiri secara incremental; shared changes harus dikoordinasi. Beri path, tes, visual QA, blocker, serta catatan logbook. Setelah QA, pandu user stage perubahan miliknya, commit, push branch PIC, dan membuat PR ke develop. Koordinator yang review/merge. Tidak ada auto push/merge tanpa otorisasi.
+- Jika anggota memberi log atau berkata "done", baca bukti, lanjut langkah yang tepat. Tidak perlu meminta starter prompt dari ketua. Bagian 12 opsional untuk permintaan lanjutan yang lebih spesifik.
+
+**Snapshot 17 November:** foundation `b0576e3` di develop, tujuh feature branch sudah dibuat, S01 Home+dua sheet telah merged melalui PR #1 (`04ccd52`), analyzer bersih dan 24 test lulus di baseline koordinator. Enam undangan dikirim (2 accepted, 4 pending pada screenshot terakhir). S02–S07 belum terkonfirmasi implementasi. Shared contracts yang sudah ada harus direview bukan dibangun ulang. Data draft 24 lamaran/6 agenda belum sama dengan fixture kode; notifikasi sementara lokal, streak dan Android QA masih pending. Verifikasi status aktual sendiri. Referensi historis lain di file ini tidak mengesampingkan snapshot ini.
+
+Task ID: Ichsan W12-001/002/003/004/005/012/013/014/028; Hanif W12-006/015/016/027; Lenno W12-017/018/029/034; Rifqi W12-007/019/020/033; Fachriza W12-008/021/022/031; Farhad W12-009/011/023/024/032; Ziyaad W12-010/025/026/030. Cek Task Tracker live untuk detail terbaru.
 
 ## 1. Protokol wajib sebelum bekerja
 
@@ -30,7 +45,7 @@
 | Master Drive | https://drive.google.com/drive/folders/1PXHKfprNf3zwka_H_6UlW_1mOdmVnbx-?hl=ID |
 | Referensi Champify | https://drive.google.com/open?id=1DCbPWAX3ELn02KWFX1Nt6CFmAyCbY12K&usp=drive_copy |
 | Form progress/logbook (dari Week 11) | https://intip.in/ProgressKelompokTEKBER26 |
-| Master Spreadsheet Week 12 | `JobTrail_Master_Week12.xlsx` → masukkan link Google Sheets setelah diunggah |
+| Master Spreadsheet Week 12 | https://docs.google.com/spreadsheets/d/15Kgb8P2igOx1BJgntQ-TriOnOgkSPngnhQUT8XXhjcY/edit |
 | Panduan AI | `AGENTS.md` di root repository (file ini) |
 | Submission Week 12 / folder bukti | Belum dikonfirmasi; gunakan link resmi setelah tersedia |
 
@@ -52,7 +67,7 @@ Untuk membuka node, gunakan file key yang sama dan parameter `node-id`, misalnya
 
 **JobTrail** — Job & Internship Application Tracker. Target: mahasiswa pencari magang, mahasiswa tingkat akhir, fresh graduate. Fungsi: mencatat dan mengelola lamaran kerja/magang, melacak status seleksi, agenda wawancara/tes, catatan, informasi CV/portofolio, dan statistik. Bukan platform penyedia lowongan, auto-apply, HRIS, recruiter chat, AI CV generator, atau aplikasi yang otomatis mengakses LinkedIn.
 
-Stack: Flutter/Dart, target pengembangan Android dan Web. Baseline environment koordinator: Flutter 3.47.9 stable dan Git berjalan; `flutter analyze`, `flutter test` default, serta demo default via web-server sudah berhasil. Branch `main` dan `develop` telah disinkronkan berdasarkan output Git terakhir. Belum ada verifikasi bahwa boilerplate baru, collaborator, feature branches, tema, atau data model sudah selesai. Periksa versi aktual pada workspace; jangan upgrade SDK/dependency seluruh tim tanpa persetujuan.
+Stack: Flutter/Dart, target pengembangan Android dan Web. Baseline environment koordinator: Flutter 3.47.9 stable dan Git berjalan; `flutter analyze`, `flutter test` default, serta demo default via web-server sudah berhasil. Branch `main` dan `develop` telah disinkronkan berdasarkan output Git terakhir. Fondasi boilerplate, tema, model dan feature branches sudah dibuat pada snapshot 17 November; lihat bagian 0 dan verifikasi ulang workspace. Akses collaborator masih bertahap. Periksa versi aktual pada workspace; jangan upgrade SDK/dependency seluruh tim tanpa persetujuan.
 
 **Target internal Week 12:** fondasi shared, tujuh screen Flutter yang mengikuti Figma, navigasi terhubung, state/interaksi dasar menggunakan satu mock data source, QA Chrome/Android sesuai ketersediaan, dokumentasi progres nyata. Gunakan state in-memory jika perlu. Persistence, login/Sign Up, Supabase/Firebase, file upload nyata, push notifications, dan deployment production adalah backlog sampai instruksi resmi/keputusan tim menetapkannya; dokumentasikan secara jujur. Jangan memperlakukan simulasi atau mock sebagai integrasi nyata.
 
@@ -68,7 +83,7 @@ Stack: Flutter/Dart, target pengembangan Android dan Web. Baseline environment k
 | Ahmad Farhad Mabrury | 5026241034 | S06 Documents / `lib/screens/documents/` | `feature/documents` | Theme, GSM, shared widgets, kontrak metadata dokumen |
 | Muhammad Ziyaad Syafiq | 5026241193 | S07 Statistics / `lib/screens/statistics/` | `feature/statistics` | Mock dataset, definisi/perhitungan metrik, rekap progress/logbook |
 
-Tujuh feature branches dibentuk setelah fondasi bersama siap, bukan dari commit awal counter app. Pembagian ini merupakan rencana Week 12, bukan klaim tugas selesai. Task ID `W12-xxx` dan status ada di workbook. PIC boleh melaksanakan tugas support yang didelegasikan tetapi wajib koordinasi ketika menyentuh file shared. Tidak boleh mengimplementasikan screen orang lain untuk menghindari konflik, kecuali koordinator mendelegasikan secara eksplisit.
+Tujuh feature branches sudah dibentuk dari fondasi bersama. Sync dengan develop terbaru sebelum bekerja. Pembagian ini merupakan rencana Week 12, bukan klaim tugas selesai. Task ID `W12-xxx` dan status ada di workbook. PIC boleh melaksanakan tugas support yang didelegasikan tetapi wajib koordinasi ketika menyentuh file shared. Tidak boleh mengimplementasikan screen orang lain untuk menghindari konflik, kecuali koordinator mendelegasikan secara eksplisit.
 
 ## 5. Kontrak UI dan user flow
 
@@ -216,7 +231,7 @@ Sebuah task baru boleh berstatus Selesai bila output yang ditargetkan ada, bisa 
 
 **Support:** gunakan task ID/pemilik di spreadsheet. Saat ada blocker lintas anggota, laporkan branch, task, file, error yang dapat direproduksi, tindakan dicoba, PIC yang dibutuhkan, dan solusi yang diusulkan. Jangan mengganti screen/dependency/API contract untuk mengakali blocker tanpa persetujuan.
 
-## 12. Starter prompt (copy, isi bagian kurung, kirim ke AI)
+## 12. Starter prompt opsional (hanya untuk permintaan lanjutan spesifik)
 
 ```text
 Baca seluruh AGENTS.md di root repo (atau attachment ini) sebagai panduan wajib JobTrail Week 12.
