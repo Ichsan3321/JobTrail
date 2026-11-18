@@ -3,6 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
 import 'package:jobtrail/models/agenda.dart';
+import 'package:jobtrail/models/recruitment_status.dart';
+import 'package:jobtrail/screens/schedule/schedule_agenda_card.dart';
+import 'package:jobtrail/widgets/status_chip.dart';
 
 Future<void> openSchedule(
   WidgetTester tester, {
@@ -58,6 +61,7 @@ void main() {
     expect(find.text('SEL, 17 NOV', skipOffstage: false), findsOneWidget);
     // 17 Nov is the reference date; 16 Nov is yesterday, so no "Besok".
     expect(find.text('Hari ini', skipOffstage: false), findsOneWidget);
+    expect(find.text('Lewat', skipOffstage: false), findsOneWidget);
     expect(find.text('Besok', skipOffstage: false), findsNothing);
     expect(
       find.byKey(const ValueKey('agenda-agenda-nusa'), skipOffstage: false),
@@ -296,5 +300,99 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('past agendas stay visible, dimmed, with a Lewat badge', (
+    tester,
+  ) async {
+    await openSchedule(tester);
+    // Nusa 16 Nov WIB < referenceDate 17 Nov: shown, dimmed, badge on header.
+    expect(
+      find.byKey(const ValueKey('schedule-past-badge-2026-11-16')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('schedule-past-badge-2026-11-16')),
+        matching: find.text('Lewat'),
+      ),
+      findsOneWidget,
+    );
+    final dimmed = tester.widget<Opacity>(
+      find.byKey(
+        const ValueKey('agenda-past-agenda-nusa'),
+        skipOffstage: false,
+      ),
+    );
+    expect(dimmed.opacity, lessThan(1));
+    expect(
+      find.descendant(
+        of: find.byKey(
+          const ValueKey('agenda-past-agenda-nusa'),
+          skipOffstage: false,
+        ),
+        matching: find.byKey(
+          const ValueKey('agenda-agenda-nusa'),
+          skipOffstage: false,
+        ),
+        skipOffstage: false,
+      ),
+      findsOneWidget,
+    );
+    // Today's agenda (Arunika 17 Nov) is not marked as past.
+    expect(
+      find.byKey(
+        const ValueKey('agenda-past-agenda-arunika'),
+        skipOffstage: false,
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('schedule-past-badge-2026-11-17'),
+        skipOffstage: false,
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('past agenda in related view is still tappable to S03', (
+    tester,
+  ) async {
+    await openSchedule(tester);
+    await tester.tap(find.byKey(const ValueKey('nav-board')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('application-app-nusa')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agenda Terkait'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('schedule-past-badge-2026-11-16')),
+      findsOneWidget,
+    );
+    await reveal(tester, find.byKey(const ValueKey('agenda-agenda-nusa')));
+    await tester.tap(find.byKey(const ValueKey('agenda-agenda-nusa')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('S03')), findsOneWidget);
+    expect(find.text('Nusa Digital'), findsOneWidget);
+  });
+
+  test('agenda type colors reuse GSM status tokens', () {
+    expect(
+      ScheduleAgendaCard.typeForeground(AgendaType.test),
+      RecruitmentStatus.test.foreground,
+    );
+    expect(
+      ScheduleAgendaCard.typeBackground(AgendaType.test),
+      RecruitmentStatus.test.background,
+    );
+    expect(
+      ScheduleAgendaCard.typeForeground(AgendaType.interview),
+      RecruitmentStatus.interview.foreground,
+    );
+    expect(
+      ScheduleAgendaCard.typeBackground(AgendaType.interview),
+      RecruitmentStatus.interview.background,
+    );
   });
 }

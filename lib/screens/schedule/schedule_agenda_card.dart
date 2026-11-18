@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../models/agenda.dart';
 import '../../models/application.dart';
+import '../../models/recruitment_status.dart';
+import '../../widgets/status_chip.dart';
 import 'schedule_format.dart';
 
 /// Temporary S05 card following Figma ScheduleCard `269:3871`.
@@ -17,19 +19,22 @@ class ScheduleAgendaCard extends StatelessWidget {
     required this.agenda,
     required this.application,
     required this.onTap,
+    this.isPast = false,
   });
   final Agenda agenda;
   final Application application;
   final VoidCallback onTap;
 
-  static Color typeForeground(AgendaType type) => switch (type) {
-    AgendaType.interview => const Color(0xFF0369A1),
-    AgendaType.test => const Color(0xFFC2410C),
+  /// Agenda date (WIB) is before `store.referenceDate`: shown dimmed, not hidden.
+  final bool isPast;
+
+  /// Agenda types reuse the locked GSM status tokens (AGENTS.md §6).
+  static RecruitmentStatus _statusOf(AgendaType type) => switch (type) {
+    AgendaType.interview => RecruitmentStatus.interview,
+    AgendaType.test => RecruitmentStatus.test,
   };
-  static Color typeBackground(AgendaType type) => switch (type) {
-    AgendaType.interview => const Color(0xFFE0F2FE),
-    AgendaType.test => const Color(0xFFFFEDD5),
-  };
+  static Color typeForeground(AgendaType type) => _statusOf(type).foreground;
+  static Color typeBackground(AgendaType type) => _statusOf(type).background;
 
   static TextStyle _style(
     double size, {
@@ -45,7 +50,7 @@ class ScheduleAgendaCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final foreground = typeForeground(agenda.type);
-    return Row(
+    final card = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
@@ -179,6 +184,12 @@ class ScheduleAgendaCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+    if (!isPast) return card;
+    return Opacity(
+      key: ValueKey('agenda-past-${agenda.id}'),
+      opacity: 0.55,
+      child: card,
     );
   }
 }

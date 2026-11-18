@@ -570,7 +570,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   Widget _groupHeader(DateTime date, DateTime today) {
     final diff = date.difference(today).inDays;
-    final badge = diff == 0
+    final isPast = diff < 0;
+    final badge = isPast
+        ? 'Lewat'
+        : diff == 0
         ? 'Hari ini'
         : diff == 1
         ? 'Besok'
@@ -586,23 +589,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ScheduleFormat.groupHeader(date),
             style: _text(12, color: AppColors.gray, weight: FontWeight.w700),
           ),
-          if (badge != null) ...[
+          if (badge != null)
             Container(
+              key: isPast
+                  ? ValueKey(
+                      'schedule-past-badge-${date.toIso8601String().substring(0, 10)}',
+                    )
+                  : null,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: AppColors.primaryLight,
+                color: isPast ? AppColors.border : AppColors.primaryLight,
                 borderRadius: BorderRadius.circular(AppRadius.chip),
               ),
               child: Text(
                 badge,
                 style: _text(
                   10,
-                  color: AppColors.primaryDark,
+                  color: isPast ? AppColors.gray : AppColors.primaryDark,
                   weight: FontWeight.w700,
                 ),
               ),
             ),
-          ],
         ],
       ),
     );
@@ -621,6 +628,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             agenda: agenda,
             application: store.applicationById(agenda.applicationId)!,
             onTap: () => widget.navigation.openDetail(agenda.applicationId),
+            isPast: entry.key.isBefore(today),
           ),
           const SizedBox(height: 10),
         ],
