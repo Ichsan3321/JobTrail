@@ -42,6 +42,26 @@ abstract final class ScheduleFormat {
     'Desember',
   ];
 
+  /// Single source for the S05 supported date range (JT-BUG-012): week
+  /// navigation, the week strip, the date picker and the date validator all
+  /// use these bounds. UTC civil dates, inclusive.
+  static final DateTime firstDate = AppDates.date(2020, 1, 1);
+  static final DateTime lastDate = AppDates.date(2035, 12, 31);
+
+  /// Whether the civil [date] lies within [firstDate]..[lastDate].
+  static bool isInRange(DateTime date) {
+    final civil = AppDates.date(date.year, date.month, date.day);
+    return !civil.isBefore(firstDate) && !civil.isAfter(lastDate);
+  }
+
+  /// [date] clamped to [firstDate]..[lastDate] (UTC civil date).
+  static DateTime clampToRange(DateTime date) {
+    final civil = AppDates.date(date.year, date.month, date.day);
+    if (civil.isBefore(firstDate)) return firstDate;
+    if (civil.isAfter(lastDate)) return lastDate;
+    return civil;
+  }
+
   /// Sunday that starts the MIN–SAB week containing [date] (UTC civil date).
   static DateTime weekStartSunday(DateTime date) =>
       date.subtract(Duration(days: date.weekday % 7));

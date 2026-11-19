@@ -82,9 +82,14 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
 
   late final List<Application> _eligible;
   late final String? _initialAppId;
-  late final DateTime? _initialDate = widget.initialDate;
+  // A prefill outside the supported range is ignored (JT-BUG-012).
+  late final DateTime? _initialDate =
+      widget.initialDate != null &&
+          ScheduleFormat.isInRange(widget.initialDate!)
+      ? widget.initialDate
+      : null;
   late String? _appId;
-  late DateTime? _date = widget.initialDate;
+  late DateTime? _date = _initialDate;
   AgendaType? _type;
   TimeOfDay? _time;
   bool _submitted = false;
@@ -178,12 +183,14 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
   }
 
   Future<void> _pickDate() async {
-    final initial = _date ?? store.referenceDate;
+    // Always clamped so showDatePicker's initialDate assertion cannot fire.
+    final initial = ScheduleFormat.clampToRange(_date ?? store.referenceDate);
+    DateTime local(DateTime d) => DateTime(d.year, d.month, d.day);
     final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(initial.year, initial.month, initial.day),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2035, 12, 31),
+      initialDate: local(initial),
+      firstDate: local(ScheduleFormat.firstDate),
+      lastDate: local(ScheduleFormat.lastDate),
       helpText: 'Pilih tanggal agenda',
       cancelText: 'Batal',
       confirmText: 'Pilih',
@@ -227,6 +234,11 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
   String? _validateDate() {
     final date = _date;
     if (date == null) return 'Tanggal wajib diisi';
+    if (!ScheduleFormat.isInRange(date)) {
+      return 'Tanggal harus antara '
+          '${ScheduleFormat.dayMonthYear(ScheduleFormat.firstDate)} dan '
+          '${ScheduleFormat.dayMonthYear(ScheduleFormat.lastDate)}';
+    }
     final app = _appId == null ? null : store.applicationById(_appId!);
     if (app != null && date.isBefore(app.appliedAt)) {
       return 'Tanggal tidak boleh sebelum tanggal lamaran '

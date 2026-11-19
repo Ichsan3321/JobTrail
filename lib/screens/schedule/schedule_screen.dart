@@ -149,7 +149,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             // Related-application view (from S03 "Agenda Terkait").
             _inset(_relatedBanner(filterApp?.company ?? 'lamaran ini'))
           else ...[
-            _inset(_monthRow(weekStart, today)),
+            _inset(_monthRow(weekStart, weekEnd, today)),
             const SizedBox(height: AppSpacing.md),
             _weekStrip(days, today, base),
             const SizedBox(height: AppSpacing.md),
@@ -250,52 +250,59 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     ],
   );
 
-  Widget _monthRow(DateTime weekStart, DateTime today) => Row(
-    children: [
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              // Month of the week's midpoint, so cross-month weeks read well.
-              ScheduleFormat.monthYear(ScheduleFormat.addDays(weekStart, 3)),
-              style: _text(16, weight: FontWeight.w700),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              'Hari ini · ${ScheduleFormat.longDate(today)}',
-              key: const ValueKey('schedule-today'),
-              style: _text(12, color: AppColors.gray),
-            ),
-          ],
+  Widget _monthRow(DateTime weekStart, DateTime weekEnd, DateTime today) {
+    // JT-BUG-012: stop at the week that contains a supported-range bound.
+    final canGoBack = weekStart.isAfter(ScheduleFormat.firstDate);
+    // weekEnd is exclusive, so the last visible day is weekEnd - 1.
+    final canGoForward = !weekEnd.isAfter(ScheduleFormat.lastDate);
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                // Month of the week's midpoint, so cross-month weeks read well.
+                ScheduleFormat.monthYear(ScheduleFormat.addDays(weekStart, 3)),
+                style: _text(16, weight: FontWeight.w700),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Hari ini · ${ScheduleFormat.longDate(today)}',
+                key: const ValueKey('schedule-today'),
+                style: _text(12, color: AppColors.gray),
+              ),
+            ],
+          ),
         ),
-      ),
-      const SizedBox(width: AppSpacing.xs),
-      _weekButton(
-        key: const ValueKey('schedule-week-prev'),
-        tooltip: 'Minggu sebelumnya',
-        icon: Icons.chevron_left,
-        onTap: () => _shiftWeek(-1),
-      ),
-      _weekButton(
-        key: const ValueKey('schedule-week-next'),
-        tooltip: 'Minggu berikutnya',
-        icon: Icons.chevron_right,
-        onTap: () => _shiftWeek(1),
-      ),
-    ],
-  );
+        const SizedBox(width: AppSpacing.xs),
+        _weekButton(
+          key: const ValueKey('schedule-week-prev'),
+          tooltip: 'Minggu sebelumnya',
+          icon: Icons.chevron_left,
+          onTap: canGoBack ? () => _shiftWeek(-1) : null,
+        ),
+        _weekButton(
+          key: const ValueKey('schedule-week-next'),
+          tooltip: 'Minggu berikutnya',
+          icon: Icons.chevron_right,
+          onTap: canGoForward ? () => _shiftWeek(1) : null,
+        ),
+      ],
+    );
+  }
 
   Widget _weekButton({
     required Key key,
     required String tooltip,
     required IconData icon,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) => Tooltip(
     message: tooltip,
     excludeFromSemantics: true,
     child: Semantics(
       button: true,
+      enabled: onTap != null,
       label: tooltip,
       child: InkResponse(
         key: key,
@@ -313,7 +320,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.border),
               ),
-              child: Icon(icon, size: 18, color: AppColors.navy),
+              child: Icon(
+                icon,
+                size: 18,
+                color: onTap == null ? AppColors.border : AppColors.navy,
+              ),
             ),
           ),
         ),
@@ -342,6 +353,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       day,
                       isToday: day == today,
                       isSelected: day == _selectedDate,
+                      enabled: ScheduleFormat.isInRange(day),
                       agendas: base.where((a) => _dateOf(a) == day).toList(),
                     ),
                   ),
@@ -355,6 +367,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     DateTime day, {
     required bool isToday,
     required bool isSelected,
+    required bool enabled,
     required List<Agenda> agendas,
   }) {
     final Color background;
@@ -371,6 +384,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       border = AppColors.primary;
       labelColor = AppColors.primaryDark;
       dateColor = AppColors.primaryDark;
+    } else if (!enabled) {
+      // Outside the supported range (JT-BUG-012): visible but inert.
+      background = AppColors.background;
+      border = AppColors.border;
+      labelColor = AppColors.border;
+      dateColor = AppColors.border;
     } else {
       background = AppColors.white;
       border = AppColors.border;
@@ -390,17 +409,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       if (isToday) 'hari ini',
       '${agendas.length} agenda',
       if (isSelected) 'terpilih',
+      if (!enabled) 'di luar rentang',
     ].join(', ');
+    final onTap = enabled ? () => _toggleDate(day) : null;
     final radius = BorderRadius.circular(AppRadius.button);
     return Semantics(
       selected: isSelected,
       label: label,
       button: true,
+      enabled: enabled,
       excludeSemantics: true,
-      onTap: () => _toggleDate(day),
+      onTap: onTap,
       child: InkWell(
         key: ValueKey('schedule-day-${day.toIso8601String().substring(0, 10)}'),
-        onTap: () => _toggleDate(day),
+        onTap: onTap,
         borderRadius: radius,
         child: ConstrainedBox(
           constraints: const BoxConstraints(
