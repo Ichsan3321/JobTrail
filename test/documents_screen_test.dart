@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
+import 'package:jobtrail/core/theme/app_theme.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
+import 'package:jobtrail/models/app_document.dart';
+import 'package:jobtrail/models/application.dart';
+import 'package:jobtrail/models/recruitment_status.dart';
 import 'package:jobtrail/screens/documents/documents_screen.dart';
 
 void main() {
@@ -170,4 +174,202 @@ void main() {
     );
     expect(find.byKey(const ValueKey('documents-add')), findsOneWidget);
   });
+
+  testWidgets('unlinked document is deleted only after confirmation', (
+    tester,
+  ) async {
+    final store = JobTrailStore.empty();
+    addTearDown(store.dispose);
+    store.saveDocument(_testDocument());
+    await _pumpDocuments(tester, store);
+    final menu = find.byKey(const ValueKey('document-menu-doc-review'));
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hapus dokumen'));
+    await tester.pumpAndSettle();
+    expect(store.documentById('doc-review'), isNotNull);
+    await tester.tap(find.text('Batal'));
+    await tester.pumpAndSettle();
+    expect(store.documentById('doc-review'), isNotNull);
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hapus dokumen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Hapus'));
+    await tester.pumpAndSettle();
+    expect(store.documents, isEmpty);
+    expect(find.text('CV Review'), findsNothing);
+    expect(find.text('Metadata dokumen dihapus.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('invalid metadata stays in form and never mutates store', (
+    tester,
+  ) async {
+    final store = JobTrailStore.empty();
+    addTearDown(store.dispose);
+    await _pumpDocuments(tester, store);
+    await tester.tap(find.byKey(const ValueKey('documents-add')));
+    await tester.pumpAndSettle();
+    final fields = find.byType(TextFormField);
+    await tester.enterText(fields.at(0), '  ');
+    await tester.enterText(fields.at(1), 'cv_review.pdf');
+    await tester.enterText(fields.at(2), '  ');
+    await tester.enterText(fields.at(3), 'Catatan tetap ada');
+    final save = find.byKey(const ValueKey('document-form-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(store.documents, isEmpty);
+    expect(find.text('Tambah Dokumen'), findsOneWidget);
+    expect(find.text('Bagian ini wajib diisi.'), findsNWidgets(2));
+    expect(
+      tester.widget<TextFormField>(fields.at(1)).controller!.text,
+      'cv_review.pdf',
+    );
+    expect(
+      tester.widget<TextFormField>(fields.at(3)).controller!.text,
+      'Catatan tetap ada',
+    );
+    await tester.enterText(fields.at(0), 'CV Review');
+    await tester.enterText(fields.at(1), '  ');
+    await tester.enterText(fields.at(2), '1.0');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(store.documents, isEmpty);
+    expect(find.text('Bagian ini wajib diisi.'), findsOneWidget);
+    expect(
+      tester.widget<TextFormField>(fields.at(0)).controller!.text,
+      'CV Review',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final size in [const Size(393, 852), const Size(320, 640)]) {
+    testWidgets('long metadata preview scrolls at $size and text scale 2', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final store = JobTrailStore.empty();
+      addTearDown(store.dispose);
+      final notes = List.filled(
+        25,
+        'Catatan panjang untuk uji preview.',
+      ).join(' ');
+      store.saveDocument(_testDocument(notes: notes));
+      for (var i = 1; i <= 9; i++) {
+        store.addApplication(
+          ApplicationDraft(
+            company: 'Perusahaan $i',
+            position: 'Posisi pengujian',
+            source: 'Situs perusahaan',
+            appliedAt: store.referenceDate,
+            status: RecruitmentStatus.applied,
+            location: 'Surabaya',
+            workType: WorkType.hybrid,
+            documentIds: const ['doc-review'],
+          ),
+        );
+      }
+      await _pumpDocuments(tester, store);
+      final card = find.byKey(const ValueKey('document-card-doc-review'));
+      final mainScroll = find.descendant(
+        of: find.byKey(const ValueKey('S06')),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Scrollable &&
+              widget.axisDirection == AxisDirection.down,
+        ),
+      );
+      await tester.scrollUntilVisible(card, 180, scrollable: mainScroll);
+      await tester.pumpAndSettle();
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      final sheet = find.byKey(const ValueKey('document-preview-sheet'));
+      expect(sheet, findsOneWidget);
+      expect(find.text(notes), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final scroll = find.descendant(
+        of: find.byKey(const ValueKey('document-preview-scroll')),
+        matching: find.byType(Scrollable),
+      );
+      final state = tester.state<ScrollableState>(scroll);
+      expect(state.position.maxScrollExtent, greaterThan(0));
+      final lastApplication = find.text('• Perusahaan 9 — Posisi pengujian');
+      await tester.ensureVisible(lastApplication);
+      await tester.pumpAndSettle();
+      expect(lastApplication.hitTestable(), findsOneWidget);
+      expect(state.position.pixels, greaterThan(0));
+      final footer = find.descendant(
+        of: sheet,
+        matching: find.text(
+          'Ini hanya pratinjau metadata. File PDF/DOCX belum diunggah '
+          'dan belum dapat dibuka.',
+        ),
+      );
+      await tester.ensureVisible(footer);
+      await tester.pumpAndSettle();
+      expect(footer.hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final close = find.byTooltip('Tutup');
+      await tester.ensureVisible(close);
+      await tester.pumpAndSettle();
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('add button and all category targets are at least 44 x 48', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store = JobTrailStore.empty();
+    addTearDown(store.dispose);
+    await _pumpDocuments(tester, store);
+    void expectTarget(Finder finder) {
+      expect(finder, findsOneWidget);
+      final size = tester.getSize(finder);
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(48));
+    }
+    expectTarget(find.byKey(const ValueKey('documents-add')));
+    for (final category in [
+      'all',
+      ...DocumentCategory.values.map((category) => category.name),
+    ]) {
+      final chip = find.byKey(ValueKey('documents-filter-$category'));
+      expectTarget(find.descendant(of: chip, matching: find.byType(InkWell)));
+    }
+    expect(tester.takeException(), isNull);
+  });
 }
+
+Future<void> _pumpDocuments(WidgetTester tester, JobTrailStore store) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: AppTheme.light,
+      home: Scaffold(body: DocumentsScreen(store: store)),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+AppDocument _testDocument({String notes = ''}) => AppDocument(
+  id: 'doc-review',
+  title: 'CV Review',
+  category: DocumentCategory.cvResume,
+  fileName: 'cv_review.pdf',
+  version: '1.0',
+  updatedAt: DateTime.utc(2026, 11, 17),
+  notes: notes,
+);

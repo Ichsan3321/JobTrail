@@ -115,21 +115,24 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         ),
       ),
       const SizedBox(width: 12),
-      SizedBox(
-        width: 44,
-        height: 44,
-        child: FilledButton(
-          key: const ValueKey('documents-add'),
-          onPressed: () => _openDocumentForm(),
-          style: FilledButton.styleFrom(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size(44, 44),
-            backgroundColor: AppColors.primary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
+      Tooltip(
+        message: 'Tambah dokumen',
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: FilledButton(
+            key: const ValueKey('documents-add'),
+            onPressed: () => _openDocumentForm(),
+            style: FilledButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(48, 48),
+              backgroundColor: AppColors.primary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
             ),
+            child: const Icon(Icons.add, size: 24),
           ),
-          child: const Icon(Icons.add, size: 24),
         ),
       ),
     ],
@@ -301,6 +304,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -313,39 +317,37 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Future<void> _openDocumentForm([AppDocument? existing]) async {
-    final value = await showModalBottomSheet<_DocumentFormValue>(
+    final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (context) => _DocumentFormSheet(document: existing),
+      builder: (context) => _DocumentFormSheet(
+        document: existing,
+        onSave: (value) {
+          store.saveDocument(
+            AppDocument(
+              id: existing?.id ?? store.nextDocumentId(),
+              title: value.title,
+              category: value.category,
+              fileName: value.fileName,
+              version: value.version,
+              updatedAt: DateTime.now().toUtc(),
+              notes: value.notes,
+            ),
+          );
+        },
+      ),
     );
-    if (!mounted || value == null) return;
-
-    try {
-      store.saveDocument(
-        AppDocument(
-          id: existing?.id ?? store.nextDocumentId(),
-          title: value.title,
-          category: value.category,
-          fileName: value.fileName,
-          version: value.version,
-          updatedAt: DateTime.now().toUtc(),
-          notes: value.notes,
-        ),
-      );
-      _showMessage(
-        existing == null
-            ? 'Metadata dokumen ditambahkan.'
-            : 'Metadata dokumen diperbarui.',
-      );
-    } on ArgumentError catch (error) {
-      _showMessage(error.message.toString());
-    } on StateError catch (error) {
-      _showMessage(error.message);
-    }
+    if (!mounted || saved != true) return;
+    _showMessage(
+      existing == null
+          ? 'Metadata dokumen ditambahkan.'
+          : 'Metadata dokumen diperbarui.',
+    );
   }
 
   Future<void> _confirmDelete(AppDocument document) async {
@@ -422,22 +424,40 @@ class _FilterChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: selected ? AppColors.primary : AppColors.white,
-    shape: StadiumBorder(
-      side: BorderSide(color: selected ? AppColors.primary : AppColors.border),
-    ),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(AppRadius.chip),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: selected ? AppColors.white : AppColors.gray,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Ink(
+              decoration: ShapeDecoration(
+                color: selected ? AppColors.primary : AppColors.white,
+                shape: StadiumBorder(
+                  side: BorderSide(
+                    color: selected ? AppColors.primary : AppColors.border,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? AppColors.white : AppColors.gray,
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -636,7 +656,8 @@ class _DocumentPreviewSheet extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
     key: const ValueKey('document-preview-sheet'),
     top: false,
-    child: Padding(
+    child: SingleChildScrollView(
+      key: const ValueKey('document-preview-scroll'),
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -732,28 +753,36 @@ class _MetadataRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 7),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 94,
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 12, color: AppColors.gray),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final labelText = Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: AppColors.gray),
+        );
+        final valueText = Text(
+          value,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.navy,
           ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AppColors.navy,
-            ),
-          ),
-        ),
-      ],
+        );
+        if (constraints.maxWidth < 280 ||
+            MediaQuery.textScalerOf(context).scale(12) > 18) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [labelText, const SizedBox(height: 4), valueText],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 94, child: labelText),
+            const SizedBox(width: 8),
+            Expanded(child: valueText),
+          ],
+        );
+      },
     ),
   );
 }
@@ -775,9 +804,10 @@ class _DocumentFormValue {
 }
 
 class _DocumentFormSheet extends StatefulWidget {
-  const _DocumentFormSheet({this.document});
+  const _DocumentFormSheet({this.document, required this.onSave});
 
   final AppDocument? document;
+  final ValueChanged<_DocumentFormValue> onSave;
 
   @override
   State<_DocumentFormSheet> createState() => _DocumentFormSheetState();
@@ -790,6 +820,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   late final TextEditingController _versionController;
   late final TextEditingController _notesController;
   late DocumentCategory _category;
+  String? _saveError;
 
   @override
   void initState() {
@@ -897,6 +928,17 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 maxLines: 3,
               ),
               const SizedBox(height: 18),
+              if (_saveError != null) ...[
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _saveError!,
+                    key: const ValueKey('document-form-error'),
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -928,16 +970,25 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
-    Navigator.pop(
-      context,
-      _DocumentFormValue(
-        title: _titleController.text.trim(),
-        category: _category,
-        fileName: _fileNameController.text.trim(),
-        version: _versionController.text.trim(),
-        notes: _notesController.text.trim(),
-      ),
-    );
+    setState(() => _saveError = null);
+    try {
+      widget.onSave(
+        _DocumentFormValue(
+          title: _titleController.text.trim(),
+          category: _category,
+          fileName: _fileNameController.text.trim(),
+          version: _versionController.text.trim(),
+          notes: _notesController.text.trim(),
+        ),
+      );
+    } on ArgumentError catch (error) {
+      setState(() => _saveError = error.message.toString());
+      return;
+    } on StateError catch (error) {
+      setState(() => _saveError = error.message);
+      return;
+    }
+    Navigator.pop(context, true);
   }
 }
 
