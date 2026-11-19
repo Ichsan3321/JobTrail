@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
@@ -10,6 +12,16 @@ import 'package:jobtrail/models/agenda.dart';
 // tanggal >= appliedAt lamaran, sesuai kontrak store.saveAgenda.
 
 const _phone = Size(393, 852);
+
+/// flutter_test renders every glyph 1 em wide; width checks need the real
+/// body font (Plus Jakarta Sans) to match what users see.
+Future<void> _loadBodyFont() async {
+  final loader = FontLoader('Plus Jakarta Sans')
+    ..addFont(
+      rootBundle.load('assets/fonts/plus_jakarta_sans/PlusJakartaSans.ttf'),
+    );
+  await loader.load();
+}
 
 Future<JobTrailStore> _open(
   WidgetTester tester, {
@@ -168,7 +180,7 @@ void main() {
     await tester.tap(_key('schedule-day-2026-11-01'));
     await tester.pumpAndSettle();
     await _openSheetFromEmptyState(tester);
-    expect(find.text('Min, 1 Nov 2026'), findsOneWidget); // prefilled
+    expect(find.text('Min, 1 Nov'), findsOneWidget); // prefilled
     // Arunika applied on 5 Nov 2026.
     await _fillRest(tester, app: 'Arunika Finance — Business Analyst Intern');
     expect(
@@ -233,7 +245,7 @@ void main() {
     await tester.tap(_key('schedule-day-2026-11-21'));
     await tester.pumpAndSettle();
     await _openSheetFromEmptyState(tester);
-    expect(find.text('Sab, 21 Nov 2026'), findsOneWidget);
+    expect(find.text('Sab, 21 Nov'), findsOneWidget);
     await _tapInSheet(tester, 'agenda-cancel');
     expect(_key('agenda-discard-dialog'), findsNothing);
     expect(_key('add-agenda-sheet'), findsNothing);
@@ -285,7 +297,7 @@ void main() {
     await tester.tap(_key('schedule-day-2027-01-01'));
     await tester.pumpAndSettle();
     await _openSheetFromEmptyState(tester);
-    expect(find.text('Jum, 1 Jan 2027'), findsOneWidget);
+    expect(find.text('1 Jan 2027'), findsOneWidget);
     await _fillRest(tester, location: 'Online');
     await _tapInSheet(tester, 'agenda-save');
     // 1 Jan 2027 10.00 WIB == 1 Jan 03.00 UTC.
@@ -429,5 +441,52 @@ void main() {
     );
     final save = tester.widget<FilledButton>(_key('agenda-save'));
     expect(save.onPressed, isNull);
+  });
+
+  group('date field shows the full value without ellipsis', () {
+    setUpAll(_loadBodyFont);
+    bool truncated(WidgetTester tester, String text) => tester
+        .renderObject<RenderParagraph>(
+          find.descendant(of: _key('agenda-date'), matching: find.text(text)),
+        )
+        .didExceedMaxLines;
+
+    for (final (size, scale) in [
+      (_phone, 1.0),
+      (const Size(360, 800), 1.0),
+      (const Size(320, 640), 1.0),
+      (const Size(320, 640), 2.0),
+    ]) {
+      testWidgets('at ${size.width.toInt()}px, text scale $scale', (
+        tester,
+      ) async {
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await _open(tester, size: size);
+        // Wednesday is the longest same-year label in the week ("Rab, 18 Nov").
+        await tester.ensureVisible(_key('schedule-day-2026-11-18'));
+        await tester.pumpAndSettle();
+        await tester.tap(_key('schedule-day-2026-11-18'));
+        await tester.pumpAndSettle();
+        await _openSheetFromEmptyState(tester);
+        await tester.ensureVisible(_key('agenda-date'));
+        await tester.pumpAndSettle();
+        expect(find.text('Rab, 18 Nov'), findsOneWidget);
+        expect(truncated(tester, 'Rab, 18 Nov'), isFalse);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('other-year dates keep the year, still untruncated', (
+      tester,
+    ) async {
+      await _open(tester);
+      await _shiftWeek(tester, 7); // 3–9 Jan 2027
+      await tester.tap(_key('schedule-day-2027-01-06'));
+      await tester.pumpAndSettle();
+      await _openSheetFromEmptyState(tester);
+      expect(find.text('6 Jan 2027'), findsOneWidget);
+      expect(truncated(tester, '6 Jan 2027'), isFalse);
+    });
   });
 }

@@ -423,6 +423,8 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
     suffixIcon: suffix == null
         ? null
         : Icon(suffix, size: 18, color: AppColors.navy),
+    // Tighter than the default 48 px so picker values have room (393 px).
+    suffixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(AppRadius.button),
       borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
@@ -615,6 +617,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
     GlobalKey<FormFieldState<void>>? fieldKey,
     required String label,
     required String? value,
+    String? semanticValue,
     required String placeholder,
     required IconData icon,
     required VoidCallback onTap,
@@ -627,7 +630,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
       required: true,
       Semantics(
         button: true,
-        value: value ?? 'belum dipilih',
+        value: semanticValue ?? value ?? 'belum dipilih',
         child: InkWell(
           key: key,
           onTap: onTap,
@@ -643,6 +646,8 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
                 ? null
                 : Text(
                     value,
+                    maxLines: 1,
+                    softWrap: false,
                     overflow: TextOverflow.ellipsis,
                     style: _text(14),
                   ),
@@ -658,7 +663,10 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
       key: const ValueKey('agenda-date'),
       fieldKey: _dateFieldKey,
       label: 'Tanggal',
-      value: _date == null ? null : ScheduleFormat.shortDate(_date!),
+      value: _date == null
+          ? null
+          : ScheduleFormat.fieldDate(_date!, store.referenceDate),
+      semanticValue: _date == null ? null : ScheduleFormat.longDate(_date!),
       placeholder: 'Pilih tanggal',
       icon: Icons.calendar_today_outlined,
       onTap: _pickDate,

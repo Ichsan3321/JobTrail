@@ -75,6 +75,11 @@ abstract final class ScheduleFormat {
   static String shortDate(DateTime date) =>
       '${shortDayMonth(date)} ${date.year}';
 
+  /// Compact picker value: "Sel, 17 Nov" when [date] is in the same year as
+  /// [reference], otherwise "1 Jan 2027" so the year is never hidden.
+  static String fieldDate(DateTime date, DateTime reference) =>
+      date.year == reference.year ? shortDayMonth(date) : dayMonthYear(date);
+
   /// "5 Nov 2026"
   static String dayMonthYear(DateTime date) =>
       '${date.day} ${_monthShort[date.month - 1]} ${date.year}';
