@@ -489,4 +489,41 @@ void main() {
       expect(truncated(tester, '6 Jan 2027'), isFalse);
     });
   });
+
+  group('action buttons keep one-line labels', () {
+    setUpAll(_loadBodyFont);
+
+    for (final width in [320.0, 360.0]) {
+      testWidgets('at ${width.toInt()}px both are 48 high and aligned', (
+        tester,
+      ) async {
+        await _open(tester, size: Size(width, 800));
+        await _openSheet(tester);
+        await tester.ensureVisible(_key('agenda-save'));
+        await tester.pumpAndSettle();
+
+        final cancel = tester.getRect(_key('agenda-cancel'));
+        final save = tester.getRect(_key('agenda-save'));
+        expect(cancel.height, 48);
+        expect(save.height, 48);
+        expect(save.top, cancel.top);
+        expect(save.width, greaterThan(cancel.width));
+
+        for (final label in ['Simpan Agenda', 'Batal']) {
+          final text = find.text(label);
+          final paragraph = tester.renderObject<RenderParagraph>(text);
+          expect(paragraph.didExceedMaxLines, isFalse, reason: label);
+          // One line of 15 px text (line height < 2 lines).
+          expect(tester.getSize(text).height, lessThan(30), reason: label);
+          // Not shrunk by the FittedBox guard at these widths.
+          expect(
+            tester.getRect(text).width,
+            moreOrLessEquals(paragraph.size.width, epsilon: 0.01),
+            reason: label,
+          );
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
 }

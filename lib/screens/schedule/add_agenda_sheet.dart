@@ -739,44 +739,55 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
     ),
   );
 
+  /// One-line label; scaleDown only kicks in as a last-resort guard (very
+  /// narrow width or large text scale), never at 320+ px with scale 1.
+  Widget _actionLabel(String text, Color color) => FittedBox(
+    fit: BoxFit.scaleDown,
+    child: Text(
+      text,
+      maxLines: 1,
+      softWrap: false,
+      textAlign: TextAlign.center,
+      style: _text(15, color: color, weight: FontWeight.w700),
+    ),
+  );
+
   Widget _actions() {
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(AppRadius.button),
     );
+    const padding = EdgeInsets.symmetric(horizontal: 12);
     return Row(
       children: [
+        // Simpan gets the larger share (2:3) so its longer label fits.
         Expanded(
+          flex: 2,
           child: OutlinedButton(
             key: const ValueKey('agenda-cancel'),
             onPressed: () => Navigator.maybePop(context),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(44, 48),
+              padding: padding,
               foregroundColor: AppColors.navy,
               side: const BorderSide(color: AppColors.border),
               shape: shape,
             ),
-            child: Text(
-              'Batal',
-              textAlign: TextAlign.center,
-              style: _text(15, weight: FontWeight.w700),
-            ),
+            child: _actionLabel('Batal', AppColors.navy),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
         Expanded(
+          flex: 3,
           child: FilledButton(
             key: const ValueKey('agenda-save'),
             onPressed: _eligible.isEmpty ? null : _save,
             style: FilledButton.styleFrom(
               minimumSize: const Size(44, 48),
+              padding: padding,
               backgroundColor: AppColors.primary,
               shape: shape,
             ),
-            child: Text(
-              'Simpan Agenda',
-              textAlign: TextAlign.center,
-              style: _text(15, color: AppColors.white, weight: FontWeight.w700),
-            ),
+            child: _actionLabel('Simpan Agenda', AppColors.white),
           ),
         ),
       ],
