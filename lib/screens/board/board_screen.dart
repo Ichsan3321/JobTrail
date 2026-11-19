@@ -132,14 +132,14 @@ class _BoardScreenState extends State<BoardScreen> {
             onFilter: _openFilterSheet,
             filterActive: _sources.isNotEmpty || _sort != BoardSort.newest,
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: 6),
           _StatusPills(
             selected: _statusFilter,
             total: all.length,
             counts: counts,
             onSelected: (status) => setState(() => _statusFilter = status),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           _SummaryCard(
             total: all.length,
             counts: counts,
@@ -166,7 +166,7 @@ class _BoardScreenState extends State<BoardScreen> {
                 application: app,
                 agenda: _highlightAgenda(
                   widget.store.agendasFor(app.id),
-                  widget.store.referenceDate,
+                  _referenceInstant(widget.store),
                 ),
                 onTap: () => _openPreview(app.id),
               ),
@@ -178,13 +178,47 @@ class _BoardScreenState extends State<BoardScreen> {
   );
 }
 
-/// Next agenda on/after the demo reference date, else the most recent one.
-Agenda? _highlightAgenda(List<Agenda> agendas, DateTime referenceDate) {
+/// Shared demo "now": 09:00 WIB (02:00Z) on [JobTrailStore.referenceDate],
+/// the anchor in docs/DUMMY_DATA.md and the store's default mutation clock.
+/// TODO(Hanif, Fachriza): replace with a store-level reference instant once
+/// the shared contract exposes one, so S01/S02/S05 compare the same value.
+DateTime _referenceInstant(JobTrailStore store) =>
+    store.referenceDate.add(const Duration(hours: 2));
+
+/// Whether [agenda] is at or after the reference instant (same day counts
+/// only when its time has not passed yet).
+bool _isUpcoming(Agenda agenda, DateTime now) =>
+    !agenda.scheduledAt.isBefore(now);
+
+/// Next agenda at/after [now]; otherwise the most recent past one.
+/// [agendas] must be sorted ascending (JobTrailStore.agendasFor does this).
+Agenda? _highlightAgenda(List<Agenda> agendas, DateTime now) {
   if (agendas.isEmpty) return null;
   for (final agenda in agendas) {
-    if (!_wib(agenda.scheduledAt).isBefore(referenceDate)) return agenda;
+    if (_isUpcoming(agenda, now)) return agenda;
   }
   return agendas.last;
+}
+
+/// Keeps the Figma visual size while guaranteeing a 48x48 hit area, matching
+/// the project's button theme minimum (JT-BUG-003).
+class _HitArea extends StatelessWidget {
+  const _HitArea({super.key, required this.onTap, required this.child});
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: onTap,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: kMinInteractiveDimension,
+        minHeight: kMinInteractiveDimension,
+      ),
+      child: Center(widthFactor: 1, heightFactor: 1, child: child),
+    ),
+  );
 }
 
 DateTime _wib(DateTime instant) =>
@@ -268,8 +302,8 @@ class _Header extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppRadius.button),
             onTap: onAdd,
             child: const SizedBox(
-              width: 44,
-              height: 44,
+              width: kMinInteractiveDimension,
+              height: kMinInteractiveDimension,
               child: Icon(Icons.add, color: AppColors.white, size: 22),
             ),
           ),
@@ -408,8 +442,8 @@ class _SearchRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(AppRadius.button),
               onTap: onFilter,
               child: const SizedBox(
-                width: 44,
-                height: 44,
+                width: kMinInteractiveDimension,
+                height: kMinInteractiveDimension,
                 child: Icon(Icons.tune, size: 20, color: AppColors.navy),
               ),
             ),
@@ -437,21 +471,27 @@ class _StatusPills extends StatelessWidget {
     scrollDirection: Axis.horizontal,
     child: Row(
       children: [
-        _Pill(
+        _HitArea(
           key: const ValueKey('board-pill-all'),
-          label: 'Semua',
-          count: total,
-          active: selected == null,
           onTap: () => onSelected(null),
+          child: _Pill(
+            label: 'Semua',
+            count: total,
+            active: selected == null,
+            onTap: () => onSelected(null),
+          ),
         ),
         for (final status in RecruitmentStatus.values) ...[
           const SizedBox(width: AppSpacing.xs),
-          _Pill(
+          _HitArea(
             key: ValueKey('board-pill-${status.name}'),
-            label: status.label,
-            count: counts[status] ?? 0,
-            active: selected == status,
             onTap: () => onSelected(status),
+            child: _Pill(
+              label: status.label,
+              count: counts[status] ?? 0,
+              active: selected == status,
+              onTap: () => onSelected(status),
+            ),
           ),
         ],
       ],
@@ -461,7 +501,6 @@ class _StatusPills extends StatelessWidget {
 
 class _Pill extends StatelessWidget {
   const _Pill({
-    super.key,
     required this.label,
     required this.count,
     required this.active,
@@ -590,37 +629,43 @@ class _SummaryCard extends StatelessWidget {
                   for (final option in BoardSort.values)
                     PopupMenuItem(value: option, child: Text(option.label)),
                 ],
-                child: Container(
-                  constraints: const BoxConstraints(
-                    minHeight: 36,
-                    maxWidth: 120,
-                  ),
-                  padding: const EdgeInsets.only(left: 12, right: 10),
-                  decoration: const ShapeDecoration(
-                    color: AppColors.white,
-                    shape: StadiumBorder(),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          sort.label,
-                          overflow: TextOverflow.ellipsis,
-                          style: _jakarta(
-                            12,
-                            FontWeight.w700,
-                            AppColors.primaryDark,
+                child: SizedBox(
+                  height: kMinInteractiveDimension,
+                  child: Center(
+                    widthFactor: 1,
+                    child: Container(
+                      constraints: const BoxConstraints(
+                        minHeight: 36,
+                        maxWidth: 120,
+                      ),
+                      padding: const EdgeInsets.only(left: 12, right: 10),
+                      decoration: const ShapeDecoration(
+                        color: AppColors.white,
+                        shape: StadiumBorder(),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              sort.label,
+                              overflow: TextOverflow.ellipsis,
+                              style: _jakarta(
+                                12,
+                                FontWeight.w700,
+                                AppColors.primaryDark,
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.keyboard_arrow_down,
+                            size: 14,
+                            color: AppColors.primaryDark,
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 4),
-                      const Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 14,
-                        color: AppColors.primaryDark,
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),

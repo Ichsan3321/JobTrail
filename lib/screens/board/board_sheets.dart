@@ -70,8 +70,8 @@ class _CloseButton extends StatelessWidget {
         customBorder: const CircleBorder(),
         onTap: () => Navigator.of(context).pop(),
         child: const SizedBox(
-          width: 44,
-          height: 44,
+          width: kMinInteractiveDimension,
+          height: kMinInteractiveDimension,
           child: Icon(Icons.close, size: 18, color: AppColors.navy),
         ),
       ),
@@ -128,6 +128,10 @@ class _FilterSheet extends StatefulWidget {
 class _FilterSheetState extends State<_FilterSheet> {
   late BoardSort _sort = widget.initial.sort;
   late Set<String> _sources = {...widget.initial.sources};
+
+  void _toggleSource(String source) => setState(() {
+    if (!_sources.remove(source)) _sources.add(source);
+  });
 
   @override
   Widget build(BuildContext context) => _SheetFrame(
@@ -189,18 +193,16 @@ class _FilterSheetState extends State<_FilterSheet> {
           else
             Wrap(
               spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
               children: [
                 for (final source in widget.sources)
-                  _SourceChip(
+                  _HitArea(
                     key: ValueKey('board-sheet-source-$source'),
-                    label: source,
-                    selected: _sources.contains(source),
-                    onTap: () => setState(() {
-                      _sources.contains(source)
-                          ? _sources.remove(source)
-                          : _sources.add(source);
-                    }),
+                    onTap: () => _toggleSource(source),
+                    child: _SourceChip(
+                      label: source,
+                      selected: _sources.contains(source),
+                      onTap: () => _toggleSource(source),
+                    ),
                   ),
               ],
             ),
@@ -290,7 +292,6 @@ class _SortOption extends StatelessWidget {
 
 class _SourceChip extends StatelessWidget {
   const _SourceChip({
-    super.key,
     required this.label,
     required this.selected,
     required this.onTap,
@@ -385,13 +386,9 @@ class _PreviewSheetState extends State<_PreviewSheet> {
         for (final id in app.documentIds)
           if (widget.store.documentById(id) case final doc?) doc.title,
       ];
-      final agenda = _highlightAgenda(
-        widget.store.agendasFor(app.id),
-        widget.store.referenceDate,
-      );
-      final upcoming =
-          agenda != null &&
-          !_wib(agenda.scheduledAt).isBefore(widget.store.referenceDate);
+      final now = _referenceInstant(widget.store);
+      final agenda = _highlightAgenda(widget.store.agendasFor(app.id), now);
+      final upcoming = agenda != null && _isUpcoming(agenda, now);
       return _SheetFrame(
         header: Row(
           crossAxisAlignment: CrossAxisAlignment.start,

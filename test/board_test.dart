@@ -1,17 +1,45 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
+import 'package:jobtrail/data/jobtrail_store.dart';
+import 'package:jobtrail/models/agenda.dart';
+import 'package:jobtrail/models/application.dart';
+import 'package:jobtrail/models/recruitment_status.dart';
 
 /// Mobile width, tall enough that every fixture card is built by the ListView.
-Future<void> openBoard(WidgetTester tester) async {
+Future<void> openBoard(WidgetTester tester, {JobTrailStore? store}) async {
   tester.view.physicalSize = const Size(393, 1600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  await tester.pumpWidget(const JobTrailApp());
+  await tester.pumpWidget(
+    store == null ? const JobTrailApp() : JobTrailApp(store: store),
+  );
   await tester.tap(find.byKey(const ValueKey('nav-board')));
   await tester.pumpAndSettle();
 }
+
+ApplicationDraft boardDraft(String company, {String source = 'Situs'}) =>
+    ApplicationDraft(
+      company: company,
+      position: 'Intern',
+      source: source,
+      appliedAt: DateTime.utc(2026, 11, 10),
+      status: RecruitmentStatus.interview,
+      location: 'Surabaya',
+      workType: WorkType.remote,
+    );
+
+/// Agenda on the demo reference date (17 Nov 2026) at [hour]:00 WIB.
+Agenda sameDayAgenda(String id, String applicationId, int hour) => Agenda(
+  id: id,
+  applicationId: applicationId,
+  type: AgendaType.interview,
+  scheduledAt: DateTime.parse(
+    '2026-11-17T${hour.toString().padLeft(2, '0')}:00:00+07:00',
+  ).toUtc(),
+  locationOrLink: 'Ruang $hour',
+);
 
 Finder card(String id) => find.byKey(ValueKey('application-$id'));
 
@@ -162,5 +190,159 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1 sedang diproses · 0 menunggu respons'), findsNothing);
     expect(find.text('3 sedang diproses · 0 menunggu respons'), findsOneWidget);
+  });
+
+  group('review regressions', () {
+    testWidgets('JT-BUG-001: Board has no shell AppBar, other tabs keep it', (
+      tester,
+    ) async {
+      await openBoard(tester);
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.text('Board Lamaran'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('nav-schedule')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBar), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('nav-home')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byKey(const ValueKey('S01')), findsOneWidget);
+    });
+
+    testWidgets('JT-BUG-002: same-day agenda before 09:00 WIB is past', (
+      tester,
+    ) async {
+      final store = JobTrailStore.empty();
+      addTearDown(store.dispose);
+      final id = store.addApplication(boardDraft('Pagi Studio'));
+      store.saveAgenda(sameDayAgenda('ag-early', id, 8));
+      store.saveAgenda(sameDayAgenda('ag-late', id, 13));
+      await openBoard(tester, store: store);
+
+      // 08:00 already passed at the 09:00 WIB reference; 13:00 is next.
+      expect(
+        find.text('Interview · 17 Nov, 13.00 WIB · Ruang 13'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('08.00 WIB'), findsNothing);
+      await tester.tap(card(id));
+      await tester.pumpAndSettle();
+      expect(find.text('Agenda berikutnya'), findsOneWidget);
+      await tester.tap(find.byTooltip('Tutup'));
+      await tester.pumpAndSettle();
+
+      // Only the past same-day agenda left: shown, labelled as last.
+      store.deleteAgenda('ag-late');
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Interview · 17 Nov, 08.00 WIB · Ruang 8'),
+        findsOneWidget,
+      );
+      await tester.tap(card(id));
+      await tester.pumpAndSettle();
+      expect(find.text('Agenda terakhir'), findsOneWidget);
+      expect(find.text('Agenda berikutnya'), findsNothing);
+    });
+
+    testWidgets('JT-BUG-002: agenda exactly at the reference time is next', (
+      tester,
+    ) async {
+      final store = JobTrailStore.empty();
+      addTearDown(store.dispose);
+      final id = store.addApplication(boardDraft('Tepat Waktu'));
+      store.saveAgenda(sameDayAgenda('ag-nine', id, 9));
+      await openBoard(tester, store: store);
+      await tester.tap(card(id));
+      await tester.pumpAndSettle();
+      expect(find.text('Agenda berikutnya'), findsOneWidget);
+    });
+
+    testWidgets('source filter keeps only the selected source', (tester) async {
+      final store = JobTrailStore.empty();
+      addTearDown(store.dispose);
+      final linkedIn = store.addApplication(
+        boardDraft('Satu Data', source: 'LinkedIn'),
+      );
+      final glints = store.addApplication(
+        boardDraft('Dua Kreasi', source: 'Glints'),
+      );
+      await openBoard(tester, store: store);
+      expect(card(linkedIn), findsOneWidget);
+      expect(card(glints), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('board-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('board-sheet-source-LinkedIn')),
+      );
+      await tester.tap(find.byKey(const ValueKey('board-sheet-apply')));
+      await tester.pumpAndSettle();
+      expect(card(linkedIn), findsOneWidget);
+      expect(card(glints), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('board-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('board-sheet-reset')));
+      await tester.tap(find.byKey(const ValueKey('board-sheet-apply')));
+      await tester.pumpAndSettle();
+      expect(card(glints), findsOneWidget);
+    });
+
+    testWidgets('Home reflects a status change made on Board', (tester) async {
+      await openBoard(tester);
+      await tester.tap(card('app-lentera'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('board-preview-status')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('board-status-interview')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Tutup'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('nav-home')));
+      await tester.pumpAndSettle();
+      final interviewCard = find
+          .ancestor(
+            of: find.textContaining('mendatang'),
+            matching: find.byType(Column),
+          )
+          .first;
+      expect(
+        find.descendant(of: interviewCard, matching: find.text('2')),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('home-total'))).data,
+        '3',
+      );
+    });
+
+    testWidgets('JT-BUG-003: interactive targets are at least 48x48', (
+      tester,
+    ) async {
+      await openBoard(tester);
+      void expectTarget(Finder finder) {
+        final size = tester.getSize(finder);
+        expect(size.width, greaterThanOrEqualTo(48), reason: '$finder');
+        expect(size.height, greaterThanOrEqualTo(48), reason: '$finder');
+      }
+
+      for (final key in [
+        'board-add',
+        'board-filter',
+        'board-pill-all',
+        'board-pill-applied',
+        'board-sort',
+      ]) {
+        expectTarget(find.byKey(ValueKey(key)));
+      }
+      await tester.tap(find.byKey(const ValueKey('board-filter')));
+      await tester.pumpAndSettle();
+      expectTarget(
+        find.byKey(const ValueKey('board-sheet-source-Situs perusahaan')),
+      );
+      expectTarget(find.byTooltip('Tutup'));
+      expectTarget(find.byKey(const ValueKey('board-sheet-sort-newest')));
+      expectTarget(find.byKey(const ValueKey('board-sheet-apply')));
+    });
   });
 }
