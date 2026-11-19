@@ -5,9 +5,14 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_dates.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../data/jobtrail_store.dart';
+import '../../models/application.dart';
 import '../../models/recruitment_status.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/status_chip.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Period enum & safe month subtraction
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Filter options for the statistics period.
 enum StatsPeriod {
@@ -19,6 +24,29 @@ enum StatsPeriod {
   const StatsPeriod(this.label);
   final String label;
 }
+
+/// Subtract [months] calendar months from [date] with day-clamping.
+/// E.g. 31 Mar − 1 month = 28 Feb (or 29 in leap year).
+/// Handles year rollover (Jan − 1 = Dec of previous year).
+@visibleForTesting
+DateTime subtractMonths(DateTime date, int months) {
+  assert(months >= 0);
+  if (months == 0) return date;
+  var year = date.year;
+  var month = date.month - months;
+  while (month < 1) {
+    month += 12;
+    year -= 1;
+  }
+  // Clamp day to last day of target month.
+  final lastDay = DateUtils.getDaysInMonth(year, month);
+  final day = date.day > lastDay ? lastDay : date.day;
+  return AppDates.date(year, month, day);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────────
 
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key, required this.store});
@@ -40,14 +68,11 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       case StatsPeriod.all:
         return null;
       case StatsPeriod.oneMonth:
-        final ref = store.referenceDate;
-        return AppDates.date(ref.year, ref.month - 1, ref.day);
+        return subtractMonths(store.referenceDate, 1);
       case StatsPeriod.twoMonths:
-        final ref = store.referenceDate;
-        return AppDates.date(ref.year, ref.month - 2, ref.day);
+        return subtractMonths(store.referenceDate, 2);
       case StatsPeriod.threeMonths:
-        final ref = store.referenceDate;
-        return AppDates.date(ref.year, ref.month - 3, ref.day);
+        return subtractMonths(store.referenceDate, 3);
     }
   }
 
@@ -77,7 +102,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             'Pantau progres lamaran kerjamu',
             style: AppTypography.body.copyWith(color: AppColors.gray),
           ),
-          // Hidden total text for test compatibility.
+          // Hidden total text for existing test compatibility.
           Text(
             'Total: $total',
             key: const ValueKey('statistics-total'),
@@ -106,7 +131,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             // ── Distribution section ──
             _SectionTitle(title: 'Distribusi Tahapan'),
             const SizedBox(height: AppSpacing.sm),
-            _DistributionCard(distribution: dist, total: total),
+            _DistributionCard(distribution: dist, total: total, apps: apps),
             const SizedBox(height: AppSpacing.lg),
 
             // ── Achievement metrics ──
@@ -130,7 +155,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Period filter
+// Period filter — accessible ChoiceChip with min 44px touch target
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PeriodFilter extends StatelessWidget {
@@ -144,7 +169,7 @@ class _PeriodFilter extends StatelessWidget {
     child: Row(
       children: [
         for (final period in StatsPeriod.values) ...[
-          _FilterChip(
+          _AccessibleFilterChip(
             label: period.label,
             isSelected: period == selected,
             onTap: () => onSelected(period),
@@ -156,8 +181,8 @@ class _PeriodFilter extends StatelessWidget {
   );
 }
 
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
+class _AccessibleFilterChip extends StatelessWidget {
+  const _AccessibleFilterChip({
     required this.label,
     required this.isSelected,
     required this.onTap,
@@ -167,22 +192,35 @@ class _FilterChip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: isSelected ? AppColors.primary : AppColors.white,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: isSelected,
+    label: label,
+    child: Material(
+      color: isSelected ? AppColors.primary : AppColors.white,
+      borderRadius: BorderRadius.circular(AppRadius.chip),
+      child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.chip),
-        border: Border.all(
-          color: isSelected ? AppColors.primary : AppColors.border,
-        ),
-      ),
-      child: Text(
-        label,
-        style: AppTypography.label.copyWith(
-          color: isSelected ? AppColors.white : AppColors.gray,
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.chip),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : AppColors.border,
+            ),
+          ),
+          child: Align(
+            alignment: Alignment.center,
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: AppTypography.label.copyWith(
+                color: isSelected ? AppColors.white : AppColors.gray,
+              ),
+            ),
+          ),
         ),
       ),
     ),
@@ -299,13 +337,25 @@ class _SectionTitle extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Distribution card with horizontal bars
+// Distribution card with horizontal bars and tap-to-expand detail
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _DistributionCard extends StatelessWidget {
-  const _DistributionCard({required this.distribution, required this.total});
+class _DistributionCard extends StatefulWidget {
+  const _DistributionCard({
+    required this.distribution,
+    required this.total,
+    required this.apps,
+  });
   final Map<RecruitmentStatus, int> distribution;
   final int total;
+  final List<Application> apps;
+
+  @override
+  State<_DistributionCard> createState() => _DistributionCardState();
+}
+
+class _DistributionCardState extends State<_DistributionCard> {
+  RecruitmentStatus? _expandedStatus;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -320,8 +370,16 @@ class _DistributionCard extends StatelessWidget {
         for (int i = 0; i < RecruitmentStatus.values.length; i++) ...[
           _DistributionRow(
             status: RecruitmentStatus.values[i],
-            count: distribution[RecruitmentStatus.values[i]] ?? 0,
-            total: total,
+            count: widget.distribution[RecruitmentStatus.values[i]] ?? 0,
+            total: widget.total,
+            isExpanded: _expandedStatus == RecruitmentStatus.values[i],
+            onTap: () => setState(() {
+              final status = RecruitmentStatus.values[i];
+              _expandedStatus = _expandedStatus == status ? null : status;
+            }),
+            apps: widget.apps
+                .where((a) => a.status == RecruitmentStatus.values[i])
+                .toList(),
           ),
           if (i < RecruitmentStatus.values.length - 1)
             const SizedBox(height: AppSpacing.sm),
@@ -336,10 +394,16 @@ class _DistributionRow extends StatelessWidget {
     required this.status,
     required this.count,
     required this.total,
+    required this.isExpanded,
+    required this.onTap,
+    required this.apps,
   });
   final RecruitmentStatus status;
   final int count;
   final int total;
+  final bool isExpanded;
+  final VoidCallback onTap;
+  final List<Application> apps;
 
   @override
   Widget build(BuildContext context) {
@@ -349,20 +413,40 @@ class _DistributionRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Flexible(child: StatusChip(status: status)),
-            const SizedBox(width: AppSpacing.xs),
-            Text(
-              '$count',
-              style: AppTypography.body.copyWith(fontWeight: FontWeight.w600),
+        // Tappable row for distribution detail.
+        InkWell(
+          onTap: count > 0 ? onTap : null,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Flexible(child: StatusChip(status: status)),
+                const SizedBox(width: AppSpacing.xs),
+                Text(
+                  '$count',
+                  style: AppTypography.body.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Text(
+                  '${percentage.toStringAsFixed(0)}%',
+                  style: AppTypography.label,
+                ),
+                if (count > 0) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    isExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 18,
+                    color: AppColors.gray,
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(width: AppSpacing.xs),
-            Text(
-              '${percentage.toStringAsFixed(0)}%',
-              style: AppTypography.label,
-            ),
-          ],
+          ),
         ),
         const SizedBox(height: 6),
         ClipRRect(
@@ -374,6 +458,40 @@ class _DistributionRow extends StatelessWidget {
             backgroundColor: status.background,
           ),
         ),
+        // Expanded detail: list of applications with this status.
+        if (isExpanded && apps.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final app in apps)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.circle,
+                          size: 6,
+                          color: AppColors.gray,
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Expanded(
+                          child: Text(
+                            '${app.company} · ${app.position}',
+                            style: AppTypography.label.copyWith(
+                              fontWeight: FontWeight.w400,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -394,17 +512,17 @@ class _AchievementMetrics extends StatelessWidget {
     final target = store.weeklyGoal.target;
     final progress = store.weeklyProgress;
 
-    // Interview conversion: how many apps ever reached Interview out of total.
-    // Requires status history data. Only show if history data is present.
+    // Interview conversion: count apps with a recorded Interview event
+    // in StatusHistory. Do NOT assume Offering implies Interview —
+    // only count explicit Interview history entries (JT-BUG-017).
     final allApps = store.applicationsInPeriod(start: start);
     final total = allApps.length;
     final historyEntries = store.history;
 
-    // Count apps that have *ever* reached Interview (from history).
+    // Collect IDs with an explicit RecruitmentStatus.interview event.
     final appIdsWithInterview = <String>{};
     for (final entry in historyEntries) {
-      if (entry.status == RecruitmentStatus.interview ||
-          entry.status == RecruitmentStatus.offering) {
+      if (entry.status == RecruitmentStatus.interview) {
         appIdsWithInterview.add(entry.applicationId);
       }
     }
@@ -427,7 +545,7 @@ class _AchievementMetrics extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // Weekly Goal
+          // Weekly Goal — independent of period filter.
           _MetricTile(
             icon: Icons.flag_outlined,
             iconColor: AppColors.mint,
@@ -437,7 +555,7 @@ class _AchievementMetrics extends StatelessWidget {
           ),
           const Divider(height: AppSpacing.lg, color: AppColors.border),
 
-          // Interview conversion — shown only when history data supports it.
+          // Interview conversion — only shown when history data supports it.
           if (hasConversionData && conversionRate != null) ...[
             _MetricTile(
               icon: Icons.trending_up_rounded,
@@ -445,14 +563,25 @@ class _AchievementMetrics extends StatelessWidget {
               label: 'Interview Conversion',
               value: '${conversionRate.toStringAsFixed(0)}%',
               subtitle:
-                  '$interviewConversionCount dari $total lamaran mencapai interview',
+                  '$interviewConversionCount dari $total lamaran'
+                  ' memiliki riwayat interview',
             ),
+            if (!_historyIsComplete(periodAppIds, historyEntries))
+              Padding(
+                padding: const EdgeInsets.only(left: 48, bottom: AppSpacing.xs),
+                child: Text(
+                  'Data riwayat mungkin tidak lengkap',
+                  style: AppTypography.label.copyWith(
+                    fontWeight: FontWeight.w400,
+                    fontSize: 10,
+                    color: AppColors.peach,
+                  ),
+                ),
+              ),
             const Divider(height: AppSpacing.lg, color: AppColors.border),
           ],
 
           // Response rate — requires explicit response definition.
-          // Per AGENTS.md §8: "response rate memerlukan definisi dan data respons
-          // yang disetujui." Data belum tersedia.
           _MetricTile(
             icon: Icons.reply_rounded,
             iconColor: AppColors.peach,
@@ -464,8 +593,6 @@ class _AchievementMetrics extends StatelessWidget {
           const Divider(height: AppSpacing.lg, color: AppColors.border),
 
           // Streak — requires weekly history data.
-          // Per AGENTS.md §8: "Streak perlu data history mingguan; jika belum
-          // ada, tampilkan state belum tersedia atau contoh berlabel."
           _MetricTile(
             icon: Icons.local_fire_department_rounded,
             iconColor: const Color(0xFFEF4444),
@@ -477,6 +604,19 @@ class _AchievementMetrics extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Heuristic: history is "complete" if every app in the period has at least
+  /// one history entry (the initial Applied event).
+  bool _historyIsComplete(
+    Set<String> periodAppIds,
+    List<dynamic> historyEntries,
+  ) {
+    final appIdsWithHistory = <String>{};
+    for (final entry in historyEntries) {
+      appIdsWithHistory.add((entry as dynamic).applicationId as String);
+    }
+    return periodAppIds.every(appIdsWithHistory.contains);
   }
 }
 
@@ -563,7 +703,7 @@ class _MiniProgressBar extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Trend card: simple bar chart of applications per week
+// Trend card: bar chart of applications per week, including zero weeks
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TrendCard extends StatelessWidget {
@@ -588,9 +728,22 @@ class _TrendCard extends StatelessWidget {
       weekBuckets[key] = (weekBuckets[key] ?? 0) + 1;
     }
 
-    // Sort by week.
-    final sortedWeeks = weekBuckets.keys.toList()..sort();
+    // Fill in zero-application weeks between first and last (JT-BUG-019).
+    final allWeeks = weekBuckets.keys.toList()..sort();
+    final firstWeek = allWeeks.first;
+    final lastWeek = allWeeks.last;
+    final filledWeeks = <DateTime>[];
+    var current = firstWeek;
+    while (!current.isAfter(lastWeek)) {
+      filledWeeks.add(current);
+      weekBuckets.putIfAbsent(current, () => 0);
+      current = current.add(const Duration(days: 7));
+    }
+
     final maxCount = weekBuckets.values.fold<int>(0, (a, b) => math.max(a, b));
+
+    // For many weeks, make the chart horizontally scrollable.
+    final useScroll = filledWeeks.length > 6;
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -606,25 +759,52 @@ class _TrendCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           SizedBox(
             height: 140,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                for (int i = 0; i < sortedWeeks.length; i++) ...[
-                  Expanded(
-                    child: _TrendBar(
-                      weekStart: sortedWeeks[i],
-                      count: weekBuckets[sortedWeeks[i]]!,
-                      maxCount: maxCount,
+            child: useScroll
+                ? SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: _buildBars(filledWeeks, weekBuckets, maxCount),
                     ),
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: _buildBars(filledWeeks, weekBuckets, maxCount),
                   ),
-                  if (i < sortedWeeks.length - 1) const SizedBox(width: 6),
-                ],
-              ],
-            ),
           ),
         ],
       ),
     );
+  }
+
+  List<Widget> _buildBars(
+    List<DateTime> weeks,
+    Map<DateTime, int> buckets,
+    int maxCount,
+  ) {
+    final useFixed = weeks.length > 6;
+    return [
+      for (int i = 0; i < weeks.length; i++) ...[
+        if (useFixed)
+          SizedBox(
+            width: 48,
+            child: _TrendBar(
+              weekStart: weeks[i],
+              count: buckets[weeks[i]]!,
+              maxCount: maxCount,
+            ),
+          )
+        else
+          Expanded(
+            child: _TrendBar(
+              weekStart: weeks[i],
+              count: buckets[weeks[i]]!,
+              maxCount: maxCount,
+            ),
+          ),
+        if (i < weeks.length - 1) const SizedBox(width: 6),
+      ],
+    ];
   }
 }
 
@@ -652,7 +832,7 @@ class _TrendBar extends StatelessWidget {
           '$count',
           style: AppTypography.label.copyWith(
             fontSize: 11,
-            color: AppColors.primary,
+            color: count > 0 ? AppColors.primary : AppColors.gray,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -660,7 +840,9 @@ class _TrendBar extends StatelessWidget {
         Container(
           height: barHeight,
           decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.75),
+            color: count > 0
+                ? AppColors.primary.withValues(alpha: 0.75)
+                : AppColors.border,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
           ),
         ),
