@@ -139,31 +139,42 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
       return ListView(
         key: const ValueKey('S05'),
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, AppSpacing.xl),
+        // Horizontal page inset is applied per child so the week strip can
+        // bleed into it on narrow screens (44 px cells, JT-BUG-007).
+        padding: const EdgeInsets.fromLTRB(0, 8, 0, AppSpacing.xl),
         children: [
-          _titleRow(),
+          _inset(_titleRow()),
           const SizedBox(height: AppSpacing.md),
           if (appFilter != null)
             // Related-application view (from S03 "Agenda Terkait").
-            _relatedBanner(filterApp?.company ?? 'lamaran ini')
+            _inset(_relatedBanner(filterApp?.company ?? 'lamaran ini'))
           else ...[
-            _monthRow(weekStart, today),
+            _inset(_monthRow(weekStart, today)),
             const SizedBox(height: AppSpacing.md),
             _weekStrip(days, today, base),
             const SizedBox(height: AppSpacing.md),
-            _summary(today, scoped, base, dayFiltered),
+            _inset(_summary(today, scoped, base, dayFiltered)),
           ],
           const SizedBox(height: AppSpacing.md),
-          _typeFilter(base),
+          _inset(_typeFilter(base)),
           const SizedBox(height: AppSpacing.md),
-          if (visible.isEmpty)
-            ..._emptyGroup(selected)
-          else
-            ..._groups(visible, today),
-          _planningNote(),
+          for (final child
+              in visible.isEmpty
+                  ? _emptyGroup(selected)
+                  : _groups(visible, today))
+            _inset(child),
+          _inset(_planningNote()),
         ],
       );
     },
+  );
+
+  static const _pageInset = 20.0;
+  static const _minTarget = 44.0;
+
+  static Widget _inset(Widget child) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: _pageInset),
+    child: child,
   );
 
   Widget _titleRow() => Row(
@@ -216,17 +227,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       const SizedBox(width: AppSpacing.sm),
       Tooltip(
         message: 'Tambah agenda',
-        child: Material(
-          color: AppColors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.button),
-          child: InkWell(
-            key: const ValueKey('schedule-add'),
+        excludeFromSemantics: true,
+        child: Semantics(
+          button: true,
+          label: 'Tambah agenda',
+          child: Material(
+            color: AppColors.primary,
             borderRadius: BorderRadius.circular(AppRadius.button),
-            onTap: _openAddSheet,
-            child: const SizedBox(
-              width: 48,
-              height: 48,
-              child: Icon(Icons.add, color: AppColors.white, size: 22),
+            child: InkWell(
+              key: const ValueKey('schedule-add'),
+              borderRadius: BorderRadius.circular(AppRadius.button),
+              onTap: _openAddSheet,
+              child: const SizedBox(
+                width: 48,
+                height: 48,
+                child: Icon(Icons.add, color: AppColors.white, size: 22),
+              ),
             ),
           ),
         ),
@@ -277,45 +293,62 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     required VoidCallback onTap,
   }) => Tooltip(
     message: tooltip,
-    child: InkResponse(
-      key: key,
-      onTap: onTap,
-      radius: 22,
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: Center(
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: AppColors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.border),
+    excludeFromSemantics: true,
+    child: Semantics(
+      button: true,
+      label: tooltip,
+      child: InkResponse(
+        key: key,
+        onTap: onTap,
+        radius: 22,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Icon(icon, size: 18, color: AppColors.navy),
             ),
-            child: Icon(icon, size: 18, color: AppColors.navy),
           ),
         ),
       ),
     ),
   );
 
+  /// Seven equal slots; each whole slot (incl. the 3 px visual gap) is the
+  /// tap target. On narrow screens the strip eats into the page inset so a
+  /// slot never drops below 44 px (320 → 6 px inset, 393 → 20 px as Figma).
   Widget _weekStrip(List<DateTime> days, DateTime today, List<Agenda> base) =>
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final (i, day) in days.indexed) ...[
-            if (i > 0) const SizedBox(width: 6),
-            Expanded(
-              child: _dayChip(
-                day,
-                isToday: day == today,
-                isSelected: day == _selectedDate,
-                agendas: base.where((a) => _dateOf(a) == day).toList(),
-              ),
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final inset = ((constraints.maxWidth - 7 * _minTarget) / 2).clamp(
+            0.0,
+            _pageInset - 3,
+          );
+          return Padding(
+            padding: EdgeInsets.symmetric(horizontal: inset),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final day in days)
+                  Expanded(
+                    child: _dayChip(
+                      day,
+                      isToday: day == today,
+                      isSelected: day == _selectedDate,
+                      agendas: base.where((a) => _dateOf(a) == day).toList(),
+                    ),
+                  ),
+              ],
             ),
-          ],
-        ],
+          );
+        },
       );
 
   Widget _dayChip(
@@ -352,71 +385,86 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       if (agendas.isEmpty && isToday)
         isSelected ? AppColors.white : AppColors.primary,
     ];
-    final dayLabel = ScheduleFormat.dayShort(day);
+    final label = [
+      ScheduleFormat.dayMonthLong(day),
+      if (isToday) 'hari ini',
+      '${agendas.length} agenda',
+      if (isSelected) 'terpilih',
+    ].join(', ');
+    final radius = BorderRadius.circular(AppRadius.button);
     return Semantics(
       selected: isSelected,
-      label:
-          '${ScheduleFormat.longDayMonth(day)}, ${agendas.length} agenda'
-          '${isToday ? ', hari ini' : ''}',
+      label: label,
       button: true,
       excludeSemantics: true,
       onTap: () => _toggleDate(day),
-      child: Material(
-        color: background,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.button),
-          side: BorderSide(color: border, width: isToday ? 1.5 : 1),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: ValueKey(
-            'schedule-day-${day.toIso8601String().substring(0, 10)}',
+      child: InkWell(
+        key: ValueKey('schedule-day-${day.toIso8601String().substring(0, 10)}'),
+        onTap: () => _toggleDate(day),
+        borderRadius: radius,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minWidth: _minTarget,
+            minHeight: _minTarget,
           ),
-          onTap: () => _toggleDate(day),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Column(
-              children: [
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    dayLabel,
-                    style: _text(
-                      10,
-                      color: labelColor,
-                      weight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    '${day.day}',
-                    style: _text(16, color: dateColor, weight: FontWeight.w700),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                SizedBox(
-                  height: 6,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (final (i, color) in dots.indexed) ...[
-                        if (i > 0) const SizedBox(width: 3),
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                          ),
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Ink(
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: radius,
+                border: Border.all(color: border, width: isToday ? 1.5 : 1),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Column(
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        ScheduleFormat.dayShort(day),
+                        style: _text(
+                          10,
+                          color: labelColor,
+                          weight: FontWeight.w600,
                         ),
-                      ],
-                    ],
-                  ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        '${day.day}',
+                        style: _text(
+                          16,
+                          color: dateColor,
+                          weight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      height: 6,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (final (i, color) in dots.indexed) ...[
+                            if (i > 0) const SizedBox(width: 3),
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
