@@ -84,6 +84,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   bool _dirty = false;
   bool _allowPop = false;
   bool _saving = false;
+  bool _submissionCommitted = false;
   bool _sourceInvalid = false;
 
   bool get _isEditing => widget.applicationId != null;
@@ -160,9 +161,9 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
 
   // A PopScope guard also catches the phone's system-back gesture/button.
   Future<void> _cancel() async {
-    if (_allowPop) return;
+    if (_allowPop || _saving || _submissionCommitted) return;
     final approved = await _confirmDiscard();
-    if (!approved || !mounted) return;
+    if (!approved || !mounted || _saving || _submissionCommitted) return;
     setState(() => _allowPop = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) widget.navigation.back();
@@ -170,18 +171,25 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }
 
   Future<void> _pickDate() async {
+    if (_saving || _submissionCommitted) return;
+    final reference = widget.store.referenceDate;
+    final lastDate = DateTime(reference.year, reference.month, reference.day);
+    final current = DateTime(_appliedAt.year, _appliedAt.month, _appliedAt.day);
+    // Existing records may predate the default year 2000 lower bound.
+    // A previously stored date beyond the demo anchor must not crash the picker.
+    var firstYear = 2000;
+    if (current.year < firstYear) firstYear = current.year;
+    if (lastDate.year < firstYear) firstYear = lastDate.year;
+    final firstDate = DateTime(firstYear);
+    final initialDate = current.isAfter(lastDate) ? lastDate : current;
     final selected = await showDatePicker(
       context: context,
       helpText: 'Tanggal Melamar',
-      firstDate: DateTime(2000),
-      lastDate: DateTime(
-        widget.store.referenceDate.year,
-        widget.store.referenceDate.month,
-        widget.store.referenceDate.day,
-      ),
-      initialDate: DateTime(_appliedAt.year, _appliedAt.month, _appliedAt.day),
+      firstDate: firstDate,
+      lastDate: lastDate,
+      initialDate: initialDate,
     );
-    if (selected == null || !mounted) return;
+    if (selected == null || !mounted || _saving || _submissionCommitted) return;
     setState(() {
       _appliedAt = AppDates.date(selected.year, selected.month, selected.day);
       _dirty = true;
@@ -200,8 +208,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     return null;
   }
 
+  // A successful store write must be treated as committed even while the next
+  // Navigator frame is pending. Otherwise a second rapid tap can add twice.
   Future<void> _save() async {
-    if (_saving) return;
+    if (_saving || _submissionCommitted || _allowPop) return;
     final formValid = _formKey.currentState?.validate() ?? false;
     setState(() => _sourceInvalid = _source.trim().isEmpty);
     if (!formValid || _sourceInvalid) return;
@@ -230,16 +240,42 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         id = widget.store.addApplication(draft);
       }
       if (!mounted) return;
-      setState(() => _allowPop = true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.navigation.finishForm(id);
+      setState(() {
+        _submissionCommitted = true;
+        _allowPop = true;
       });
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _finishNavigation(id),
+      );
     } on ArgumentError catch (error) {
       if (mounted) _showError(error.message?.toString() ?? error.toString());
     } on StateError catch (error) {
       if (mounted) _showError(error.message);
+    } catch (error) {
+      if (mounted) _showError('Gagal menyimpan lamaran: $error');
     } finally {
-      if (mounted) setState(() => _saving = false);
+      // Only a failed store write may unlock the Save button. A successful
+      // write remains locked until the form route has finished popping.
+      if (mounted && !_submissionCommitted) setState(() => _saving = false);
+    }
+  }
+
+  void _finishNavigation(String id) {
+    if (!mounted) return;
+    try {
+      widget.navigation.finishForm(id);
+    } catch (error) {
+      // A commit already happened; allowing Save again would create a duplicate.
+      // Offer navigation retry without writing to the store a second time.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Lamaran tersimpan, tetapi gagal kembali.'),
+          action: SnackBarAction(
+            label: 'Coba lagi',
+            onPressed: () => _finishNavigation(id),
+          ),
+        ),
+      );
     }
   }
 
@@ -329,7 +365,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           fontWeight: FontWeight.w600,
         ),
         textInputAction: TextInputAction.next,
-        validator: isRequired || optional ? _required : null,
+        validator: isRequired ? _required : null,
         decoration: _inputDecoration(icon, hint),
       ),
     ],
@@ -554,6 +590,14 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     ],
   );
 
+  void _selectWorkType(WorkType type) {
+    if (_saving || _submissionCommitted) return;
+    setState(() {
+      _workType = type;
+      _dirty = true;
+    });
+  }
+
   Widget _workLocationCard() => _card(
     icon: Icons.location_on_outlined,
     title: 'Lokasi & Tipe Kerja',
@@ -564,9 +608,8 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         controller: _location,
         icon: Icons.place_outlined,
         hint: 'Contoh: Bandung',
-        // Figma marks this optional, but the current shared store requires it.
-        // Keep the design label; show a validation error if it is empty.
-        optional: true,
+        // Shared store requires location until the central contract changes.
+        isRequired: true,
       ),
       const SizedBox(height: 14),
       _fieldLabel('Tipe Kerja', isRequired: true),
@@ -581,32 +624,39 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           children: [
             for (final type in WorkType.values)
               Expanded(
-                child: InkWell(
-                  onTap: () => setState(() {
-                    _workType = type;
-                    _dirty = true;
-                  }),
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    height: 38,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _workType == type
-                          ? Colors.white
-                          : Colors.transparent,
-                      border: _workType == type
-                          ? Border.all(color: _border)
-                          : null,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      type.label,
-                      style: TextStyle(
-                        color: _workType == type ? _primaryDark : _gray,
-                        fontSize: 13,
-                        fontWeight: _workType == type
-                            ? FontWeight.w700
-                            : FontWeight.w500,
+                child: Semantics(
+                  key: ValueKey('work-type-${type.name}'),
+                  container: true,
+                  button: true,
+                  selected: _workType == type,
+                  label: 'Tipe kerja ${type.label}',
+                  onTap: _saving ? null : () => _selectWorkType(type),
+                  child: InkWell(
+                    excludeFromSemantics: true,
+                    onTap: _saving ? null : () => _selectWorkType(type),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 44),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: _workType == type
+                            ? Colors.white
+                            : Colors.transparent,
+                        border: _workType == type
+                            ? Border.all(color: _border)
+                            : null,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        type.label,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _workType == type ? _primaryDark : _gray,
+                          fontSize: 13,
+                          fontWeight: _workType == type
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
                       ),
                     ),
                   ),
@@ -747,7 +797,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           title: Row(
             children: [
               OutlinedButton(
-                onPressed: _cancel,
+                onPressed: _saving ? null : _cancel,
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(44, 44),
                   maximumSize: const Size(44, 44),
@@ -787,38 +837,42 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         ),
         body: SafeArea(
           bottom: false,
-          child: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4, bottom: 12),
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '*',
-                            style: TextStyle(color: Color(0xFFB91C1C)),
-                          ),
-                          TextSpan(
-                            text: ' wajib diisi',
-                            style: TextStyle(color: _gray),
-                          ),
-                        ],
+          child: AbsorbPointer(
+            absorbing: _saving,
+            child: Form(
+              key: _formKey,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4, bottom: 12),
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: '*',
+                              style: TextStyle(color: Color(0xFFB91C1C)),
+                            ),
+                            TextSpan(
+                              text: ' wajib diisi',
+                              style: TextStyle(color: _gray),
+                            ),
+                          ],
+                        ),
+                        style: TextStyle(fontSize: 11),
                       ),
-                      style: TextStyle(fontSize: 11),
                     ),
-                  ),
-                  _informationCard(),
-                  const SizedBox(height: 12),
-                  _workLocationCard(),
-                  const SizedBox(height: 12),
-                  _additionalCard(),
-                ],
+                    _informationCard(),
+                    const SizedBox(height: 12),
+                    _workLocationCard(),
+                    const SizedBox(height: 12),
+                    _additionalCard(),
+                  ],
+                ),
               ),
             ),
           ),
