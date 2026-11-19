@@ -5,6 +5,7 @@ import '../../core/constants/app_tokens.dart';
 import '../../core/routes/app_navigation.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/agenda.dart';
+import 'add_agenda_sheet.dart';
 import 'schedule_agenda_card.dart';
 import 'schedule_format.dart';
 
@@ -40,11 +41,44 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   JobTrailStore get store => widget.store;
 
-  void _showAddPending() {
-    ScaffoldMessenger.of(context)
+  /// Opens the add sheet prefilled with the selected date (week view) or the
+  /// related application (Agenda Terkait view), then focuses the new agenda.
+  Future<void> _openAddSheet() async {
+    final appFilter = widget.navigation.scheduleApplicationId;
+    final messenger = ScaffoldMessenger.of(context);
+    final id = await showAddAgendaSheet(
+      context,
+      store: store,
+      initialDate: appFilter == null ? _selectedDate : null,
+      initialApplicationId: appFilter,
+    );
+    if (!mounted || id == null) return;
+    final agenda = store.agendas.where((a) => a.id == id).firstOrNull;
+    if (agenda == null) return;
+    final date = _dateOf(agenda);
+    final stayRelated = appFilter == agenda.applicationId;
+    if (appFilter != null && !stayRelated) {
+      widget.navigation.showTab(AppTab.schedule);
+    }
+    setState(() {
+      _weekOffset =
+          ScheduleFormat.weekStartSunday(date)
+              .difference(ScheduleFormat.weekStartSunday(store.referenceDate))
+              .inDays ~/
+          7;
+      _selectedDate = stayRelated ? null : date;
+      _type = null;
+    });
+    messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(content: Text('Tambah agenda segera tersedia')),
+        SnackBar(
+          key: const ValueKey('schedule-saved-snackbar'),
+          content: Text(
+            'Agenda tersimpan: ${ScheduleFormat.shortDayMonth(date)}, '
+            '${ScheduleFormat.timeWib(agenda.scheduledAt)} WIB',
+          ),
+        ),
       );
   }
 
@@ -188,7 +222,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           child: InkWell(
             key: const ValueKey('schedule-add'),
             borderRadius: BorderRadius.circular(AppRadius.button),
-            onTap: _showAddPending,
+            onTap: _openAddSheet,
             child: const SizedBox(
               width: 48,
               height: 48,
@@ -688,7 +722,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             const SizedBox(height: AppSpacing.md),
             FilledButton(
               key: const ValueKey('schedule-empty-add'),
-              onPressed: _showAddPending,
+              onPressed: _openAddSheet,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 minimumSize: const Size(180, 48),

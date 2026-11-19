@@ -213,7 +213,7 @@ void main() {
     );
   });
 
-  testWidgets('add buttons only announce pending feature, no fake form', (
+  testWidgets('add button opens the Tambah Agenda sheet without saving', (
     tester,
   ) async {
     final store = JobTrailStore.demo();
@@ -221,9 +221,10 @@ void main() {
     await openSchedule(tester, store: store);
     final before = store.agendas.length;
     await tester.tap(find.byKey(const ValueKey('schedule-add')));
-    await tester.pump();
-    expect(find.text('Tambah agenda segera tersedia'), findsOneWidget);
-    expect(find.byType(BottomSheet), findsNothing);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('add-agenda-sheet')), findsOneWidget);
+    expect(find.text('Tambah Agenda Seleksi'), findsOneWidget);
+    expect(find.text('Tambah agenda segera tersedia'), findsNothing);
     expect(store.agendas.length, before);
   });
 

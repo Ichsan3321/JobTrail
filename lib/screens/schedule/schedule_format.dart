@@ -67,6 +67,28 @@ abstract final class ScheduleFormat {
   static String longDayMonth(DateTime date) =>
       '${dayLong(date)}, ${date.day} ${_monthShort[date.month - 1]}';
 
+  /// "Selasa 17 November" (screen-reader labels).
+  static String dayMonthLong(DateTime date) =>
+      '${dayLong(date)} ${date.day} ${_monthLong[date.month - 1]}';
+
+  /// "Sen, 16 Nov 2026"
+  static String shortDate(DateTime date) =>
+      '${shortDayMonth(date)} ${date.year}';
+
+  /// "5 Nov 2026"
+  static String dayMonthYear(DateTime date) =>
+      '${date.day} ${_monthShort[date.month - 1]} ${date.year}';
+
+  /// WIB civil [date] + [hour]:[minute] parsed with an explicit +07:00
+  /// offset, returned as a UTC instant (store contract).
+  static DateTime parseWib(DateTime date, int hour, int minute) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return DateTime.parse(
+      '${date.year.toString().padLeft(4, '0')}-${two(date.month)}-'
+      '${two(date.day)}T${two(hour)}:${two(minute)}:00+07:00',
+    ).toUtc();
+  }
+
   /// "SEN, 16 NOV"
   static String groupHeader(DateTime date) =>
       '${dayShort(date)}, ${date.day} ${_monthShort[date.month - 1].toUpperCase()}';
