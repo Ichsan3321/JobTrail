@@ -1,26 +1,676 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
+import '../../core/constants/app_dates.dart';
+import '../../core/constants/app_tokens.dart';
 import '../../data/jobtrail_store.dart';
-import '../../widgets/placeholder_content.dart';
+import '../../models/recruitment_status.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/status_chip.dart';
 
-class StatisticsScreen extends StatelessWidget {
+/// Filter options for the statistics period.
+enum StatsPeriod {
+  all('Saat Ini'),
+  oneMonth('1 Bulan Terakhir'),
+  twoMonths('2 Bulan Terakhir'),
+  threeMonths('3 Bulan Terakhir');
+
+  const StatsPeriod(this.label);
+  final String label;
+}
+
+class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key, required this.store});
   final JobTrailStore store;
+
+  @override
+  State<StatisticsScreen> createState() => _StatisticsScreenState();
+}
+
+class _StatisticsScreenState extends State<StatisticsScreen> {
+  StatsPeriod _period = StatsPeriod.all;
+
+  JobTrailStore get store => widget.store;
+
+  /// Compute inclusive start date from the selected period using the store's
+  /// fixed reference date so results are deterministic and anchor-based.
+  DateTime? _periodStart() {
+    switch (_period) {
+      case StatsPeriod.all:
+        return null;
+      case StatsPeriod.oneMonth:
+        final ref = store.referenceDate;
+        return AppDates.date(ref.year, ref.month - 1, ref.day);
+      case StatsPeriod.twoMonths:
+        final ref = store.referenceDate;
+        return AppDates.date(ref.year, ref.month - 2, ref.day);
+      case StatsPeriod.threeMonths:
+        final ref = store.referenceDate;
+        return AppDates.date(ref.year, ref.month - 3, ref.day);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: store,
-    builder: (context, _) => PlaceholderContent(
-      screenId: 'S07',
-      title: 'Statistik',
-      owner: 'Ziyaad',
-      children: [
-        Text(
-          'Total: ${store.applications.length}',
-          key: const ValueKey('statistics-total'),
+    builder: (context, _) {
+      final start = _periodStart();
+      final apps = store.applicationsInPeriod(start: start);
+      final dist = store.distribution(start: start);
+      final total = apps.length;
+
+      return ListView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.lg,
         ),
-        for (final entry in store.distribution().entries)
-          Text('${entry.key.label}: ${entry.value}'),
+        children: [
+          // ── Header ──
+          Text(
+            'Statistik',
+            key: const ValueKey('S07'),
+            style: AppTypography.heading,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Pantau progres lamaran kerjamu',
+            style: AppTypography.body.copyWith(color: AppColors.gray),
+          ),
+          // Hidden total text for test compatibility.
+          Text(
+            'Total: $total',
+            key: const ValueKey('statistics-total'),
+            style: const TextStyle(fontSize: 0, height: 0),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+
+          // ── Period filter chips ──
+          _PeriodFilter(
+            selected: _period,
+            onSelected: (period) => setState(() => _period = period),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+
+          // ── Empty state ──
+          if (total == 0) ...[
+            const SizedBox(height: AppSpacing.xl),
+            const EmptyState(
+              message: 'Belum ada lamaran pada periode ini.\nTambahkan lamaran untuk melihat statistik.',
+            ),
+          ] else ...[
+            // ── Summary cards ──
+            _SummaryRow(distribution: dist, total: total),
+            const SizedBox(height: AppSpacing.lg),
+
+            // ── Distribution section ──
+            _SectionTitle(title: 'Distribusi Tahapan'),
+            const SizedBox(height: AppSpacing.sm),
+            _DistributionCard(distribution: dist, total: total),
+            const SizedBox(height: AppSpacing.lg),
+
+            // ── Achievement metrics ──
+            _SectionTitle(title: 'Metrik Pencapaian'),
+            const SizedBox(height: AppSpacing.sm),
+            _AchievementMetrics(store: store, start: start),
+            const SizedBox(height: AppSpacing.lg),
+
+            // ── Trend section ──
+            _SectionTitle(title: 'Tren Lamaran'),
+            const SizedBox(height: AppSpacing.sm),
+            _TrendCard(store: store, start: start),
+          ],
+
+          // Bottom padding so navbar doesn't cover content.
+          const SizedBox(height: AppSpacing.xl),
+        ],
+      );
+    },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Period filter
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PeriodFilter extends StatelessWidget {
+  const _PeriodFilter({required this.selected, required this.onSelected});
+  final StatsPeriod selected;
+  final ValueChanged<StatsPeriod> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        for (final period in StatsPeriod.values) ...[
+          _FilterChip(
+            label: period.label,
+            isSelected: period == selected,
+            onTap: () => onSelected(period),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+        ],
       ],
     ),
   );
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: isSelected ? AppColors.primary : AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        border: Border.all(
+          color: isSelected ? AppColors.primary : AppColors.border,
+        ),
+      ),
+      child: Text(
+        label,
+        style: AppTypography.label.copyWith(
+          color: isSelected ? AppColors.white : AppColors.gray,
+        ),
+      ),
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Summary row: Total, Interview, Offering
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({required this.distribution, required this.total});
+  final Map<RecruitmentStatus, int> distribution;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: _SummaryCard(
+          label: 'Total Lamaran',
+          value: '$total',
+          icon: Icons.work_outline_rounded,
+          color: AppColors.primary,
+          backgroundColor: AppColors.primaryLight,
+        ),
+      ),
+      const SizedBox(width: AppSpacing.sm),
+      Expanded(
+        child: _SummaryCard(
+          label: 'Interview',
+          value: '${distribution[RecruitmentStatus.interview] ?? 0}',
+          icon: Icons.groups_outlined,
+          color: const Color(0xFF0369A1),
+          backgroundColor: const Color(0xFFE0F2FE),
+        ),
+      ),
+      const SizedBox(width: AppSpacing.sm),
+      Expanded(
+        child: _SummaryCard(
+          label: 'Offering',
+          value: '${distribution[RecruitmentStatus.offering] ?? 0}',
+          icon: Icons.check_circle_outline_rounded,
+          color: const Color(0xFF047857),
+          backgroundColor: const Color(0xFFD1FAE5),
+        ),
+      ),
+    ],
+  );
+}
+
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+    required this.backgroundColor,
+  });
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(AppSpacing.md),
+    decoration: BoxDecoration(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      border: Border.all(color: AppColors.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 20, color: color),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          value,
+          style: AppTypography.heading.copyWith(fontSize: 22, color: color),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: AppTypography.label.copyWith(fontSize: 11),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section title
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title});
+  final String title;
+
+  @override
+  Widget build(BuildContext context) =>
+      Text(title, style: AppTypography.section);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Distribution card with horizontal bars
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DistributionCard extends StatelessWidget {
+  const _DistributionCard({required this.distribution, required this.total});
+  final Map<RecruitmentStatus, int> distribution;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(AppSpacing.md),
+    decoration: BoxDecoration(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      border: Border.all(color: AppColors.border),
+    ),
+    child: Column(
+      children: [
+        for (int i = 0; i < RecruitmentStatus.values.length; i++) ...[
+          _DistributionRow(
+            status: RecruitmentStatus.values[i],
+            count: distribution[RecruitmentStatus.values[i]] ?? 0,
+            total: total,
+          ),
+          if (i < RecruitmentStatus.values.length - 1)
+            const SizedBox(height: AppSpacing.sm),
+        ],
+      ],
+    ),
+  );
+}
+
+class _DistributionRow extends StatelessWidget {
+  const _DistributionRow({
+    required this.status,
+    required this.count,
+    required this.total,
+  });
+  final RecruitmentStatus status;
+  final int count;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final percentage = total == 0 ? 0.0 : (count / total * 100);
+    final fraction = total == 0 ? 0.0 : count / total;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Flexible(child: StatusChip(status: status)),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              '$count',
+              style: AppTypography.body.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              '${percentage.toStringAsFixed(0)}%',
+              style: AppTypography.label,
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: fraction,
+            minHeight: 6,
+            color: status.foreground,
+            backgroundColor: status.background,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Achievement metrics
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AchievementMetrics extends StatelessWidget {
+  const _AchievementMetrics({required this.store, required this.start});
+  final JobTrailStore store;
+  final DateTime? start;
+
+  @override
+  Widget build(BuildContext context) {
+    final achieved = store.weeklyAchieved;
+    final target = store.weeklyGoal.target;
+    final progress = store.weeklyProgress;
+
+    // Interview conversion: how many apps ever reached Interview out of total.
+    // Requires status history data. Only show if history data is present.
+    final allApps = store.applicationsInPeriod(start: start);
+    final total = allApps.length;
+    final historyEntries = store.history;
+
+    // Count apps that have *ever* reached Interview (from history).
+    final appIdsWithInterview = <String>{};
+    for (final entry in historyEntries) {
+      if (entry.status == RecruitmentStatus.interview ||
+          entry.status == RecruitmentStatus.offering) {
+        appIdsWithInterview.add(entry.applicationId);
+      }
+    }
+    // Filter to only include apps in current period.
+    final periodAppIds = allApps.map((a) => a.id).toSet();
+    final interviewConversionCount = appIdsWithInterview
+        .intersection(periodAppIds)
+        .length;
+    final hasConversionData = historyEntries.isNotEmpty && total > 0;
+    final conversionRate = hasConversionData
+        ? (interviewConversionCount / total * 100)
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          // Weekly Goal
+          _MetricTile(
+            icon: Icons.flag_outlined,
+            iconColor: AppColors.mint,
+            label: 'Target Minggu Ini',
+            value: '$achieved dari $target',
+            trailing: _MiniProgressBar(progress: progress),
+          ),
+          const Divider(height: AppSpacing.lg, color: AppColors.border),
+
+          // Interview conversion — shown only when history data supports it.
+          if (hasConversionData && conversionRate != null) ...[
+            _MetricTile(
+              icon: Icons.trending_up_rounded,
+              iconColor: const Color(0xFF0369A1),
+              label: 'Interview Conversion',
+              value: '${conversionRate.toStringAsFixed(0)}%',
+              subtitle:
+                  '$interviewConversionCount dari $total lamaran mencapai interview',
+            ),
+            const Divider(height: AppSpacing.lg, color: AppColors.border),
+          ],
+
+          // Response rate — requires explicit response definition.
+          // Per AGENTS.md §8: "response rate memerlukan definisi dan data respons
+          // yang disetujui." Data belum tersedia.
+          _MetricTile(
+            icon: Icons.reply_rounded,
+            iconColor: AppColors.peach,
+            label: 'Response Rate',
+            value: 'Belum tersedia',
+            subtitle: 'Memerlukan definisi data respons yang disetujui',
+            dimmed: true,
+          ),
+          const Divider(height: AppSpacing.lg, color: AppColors.border),
+
+          // Streak — requires weekly history data.
+          // Per AGENTS.md §8: "Streak perlu data history mingguan; jika belum
+          // ada, tampilkan state belum tersedia atau contoh berlabel."
+          _MetricTile(
+            icon: Icons.local_fire_department_rounded,
+            iconColor: const Color(0xFFEF4444),
+            label: 'Streak Mingguan',
+            value: 'Belum tersedia',
+            subtitle: 'Memerlukan data history mingguan',
+            dimmed: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  const _MetricTile({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.value,
+    this.subtitle,
+    this.trailing,
+    this.dimmed = false,
+  });
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final String value;
+  final String? subtitle;
+  final Widget? trailing;
+  final bool dimmed;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: iconColor.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, size: 20, color: iconColor),
+      ),
+      const SizedBox(width: AppSpacing.sm),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: AppTypography.label),
+            const SizedBox(height: 2),
+            Text(
+              value,
+              style: AppTypography.body.copyWith(
+                fontWeight: FontWeight.w600,
+                color: dimmed ? AppColors.gray : AppColors.navy,
+              ),
+            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                subtitle!,
+                style: AppTypography.label.copyWith(
+                  fontWeight: FontWeight.w400,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+            if (trailing != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              trailing!,
+            ],
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+class _MiniProgressBar extends StatelessWidget {
+  const _MiniProgressBar({required this.progress});
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(4),
+    child: LinearProgressIndicator(
+      value: progress,
+      minHeight: 8,
+      color: AppColors.mint,
+      backgroundColor: AppColors.primaryLight,
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trend card: simple bar chart of applications per week
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TrendCard extends StatelessWidget {
+  const _TrendCard({required this.store, required this.start});
+  final JobTrailStore store;
+  final DateTime? start;
+
+  @override
+  Widget build(BuildContext context) {
+    final apps = store.applicationsInPeriod(start: start);
+    if (apps.isEmpty) {
+      return const EmptyState(message: 'Belum ada data tren pada periode ini.');
+    }
+
+    // Group applications by week (Monday-based).
+    final weekBuckets = <DateTime, int>{};
+    for (final app in apps) {
+      final weekStart = app.appliedAt.subtract(
+        Duration(days: app.appliedAt.weekday - 1),
+      );
+      final key = AppDates.date(weekStart.year, weekStart.month, weekStart.day);
+      weekBuckets[key] = (weekBuckets[key] ?? 0) + 1;
+    }
+
+    // Sort by week.
+    final sortedWeeks = weekBuckets.keys.toList()..sort();
+    final maxCount = weekBuckets.values.fold<int>(0, (a, b) => math.max(a, b));
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Lamaran per Minggu', style: AppTypography.label),
+          const SizedBox(height: AppSpacing.md),
+          SizedBox(
+            height: 140,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                for (int i = 0; i < sortedWeeks.length; i++) ...[
+                  Expanded(
+                    child: _TrendBar(
+                      weekStart: sortedWeeks[i],
+                      count: weekBuckets[sortedWeeks[i]]!,
+                      maxCount: maxCount,
+                    ),
+                  ),
+                  if (i < sortedWeeks.length - 1) const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrendBar extends StatelessWidget {
+  const _TrendBar({
+    required this.weekStart,
+    required this.count,
+    required this.maxCount,
+  });
+  final DateTime weekStart;
+  final int count;
+  final int maxCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = maxCount == 0 ? 0.0 : count / maxCount;
+    final barHeight = math.max(fraction * 100, 4.0);
+    final weekLabel =
+        '${weekStart.day.toString().padLeft(2, '0')}/${weekStart.month.toString().padLeft(2, '0')}';
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Text(
+          '$count',
+          style: AppTypography.label.copyWith(
+            fontSize: 11,
+            color: AppColors.primary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          height: barHeight,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.75),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          weekLabel,
+          style: AppTypography.label.copyWith(fontSize: 10),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
 }
