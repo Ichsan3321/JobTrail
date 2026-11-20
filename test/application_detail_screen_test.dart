@@ -438,40 +438,30 @@ void main() {
     final store = JobTrailStore.demo();
     final navigation = await mountApp(tester, store);
     const id = 'app-nusa';
+    final originalIds = store.applications.map((app) => app.id).toSet();
     await openDetail(tester, navigation, id);
     await tester.tap(find.text('Edit Lamaran'));
     await tester.pumpAndSettle();
-    final company = tester.widget<Text>(
-      find.byKey(const ValueKey('form-company')),
-    );
-    expect(company.data, store.applicationById(id)!.company);
+    final companyField = find.byType(TextFormField).first;
+    final positionField = find.byType(TextFormField).at(1);
     expect(
-      ModalRoute.of(tester.element(find.byKey(const ValueKey('form-company'))))!
-          .settings
-          .arguments,
+      tester.widget<TextFormField>(companyField).controller!.text,
+      store.applicationById(id)!.company,
+    );
+    expect(
+      ModalRoute.of(tester.element(companyField))!.settings.arguments,
       id,
     );
-
-    // S04 currently exposes the route contract, but no Save control.
-    final application = store.applicationById(id)!;
-    store.updateApplication(
-      id,
-      ApplicationDraft(
-        company: application.company,
-        position: 'Posisi setelah edit',
-        source: application.source,
-        appliedAt: application.appliedAt,
-        status: application.status,
-        location: application.location,
-        workType: application.workType,
-        salary: application.salary,
-        notes: application.notes,
-        documentIds: application.documentIds,
-      ),
+    expect(
+      tester.widget<TextFormField>(positionField).controller!.text,
+      store.applicationById(id)!.position,
     );
-    navigation.finishForm(id);
+    await tester.enterText(positionField, 'Posisi setelah edit');
+    await tester.tap(find.text('Simpan Perubahan'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('S03')), findsOneWidget);
     expect(find.text('Posisi setelah edit'), findsOneWidget);
+    expect(store.applicationById(id)!.position, 'Posisi setelah edit');
+    expect(store.applications.map((app) => app.id).toSet(), originalIds);
   });
 }
