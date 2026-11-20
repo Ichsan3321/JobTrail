@@ -1,0 +1,196 @@
+{
+  "date": "2026-11-20",
+  "timezone": "Asia/Bangkok",
+  "branch": "feature/auth",
+  "figmaFile": "292w6TVRmn1YCYbVXuRNp5",
+  "storyboard": "602:8733",
+  "frames": [
+    "602:8736",
+    "602:8774",
+    "602:8812",
+    "602:8850"
+  ],
+  "officialLogoComponent": "172:1877",
+  "timeline": {
+    "anchorsSeconds": [
+      0,
+      0.5,
+      1.3,
+      2.2
+    ],
+    "splashDurationMs": 2650,
+    "transitionMs": 220,
+    "totalNominalMs": 2870,
+    "finalLogoLogicalPx": 148,
+    "referenceViewport": [
+      393,
+      852
+    ]
+  },
+  "checks": {
+    "analyze": "PASS",
+    "test": {
+      "passed": 223,
+      "failed": 0,
+      "skipped": 0,
+      "successfulRun": true
+    },
+    "releaseBuild": "PASS",
+    "diffCheck": "PASS"
+  },
+  "preserved": {
+    "lib/app.dart": true,
+    "lib/main.dart": true,
+    "lib/screens/auth/auth_provider.dart": true,
+    "lib/screens/auth/auth_brand.dart": true,
+    "pubspec.yaml": true,
+    "pubspec.lock": true,
+    "AuthScreen": true
+  },
+  "assets": {
+    "count": 13,
+    "totalPngBytes": 148612,
+    "newDependencies": 0,
+    "sources": "docs/auth-assets/splash-v2"
+  },
+  "captures": {
+    "exactStages": [
+      {
+        "stage": "ignite",
+        "seconds": 0,
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "file": "docs/qa/splash-v2/ignite-393x852.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "trail",
+        "seconds": 0.5,
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "file": "docs/qa/splash-v2/trail-393x852.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "reveal",
+        "seconds": 1.3,
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "file": "docs/qa/splash-v2/reveal-393x852.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "ready",
+        "seconds": 2.2,
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "file": "docs/qa/splash-v2/ready-393x852.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "ignite",
+        "seconds": 0,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "file": "docs/qa/splash-v2/ignite-320x640.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "trail",
+        "seconds": 0.5,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "file": "docs/qa/splash-v2/trail-320x640.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "reveal",
+        "seconds": 1.3,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "file": "docs/qa/splash-v2/reveal-320x640.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      },
+      {
+        "stage": "ready",
+        "seconds": 2.2,
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "file": "docs/qa/splash-v2/ready-320x640.png",
+        "host": "isolated host of the unchanged production SplashV2Scene"
+      }
+    ],
+    "liveRuns": [
+      {
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "transition": {
+          "target": 2625,
+          "elapsedAfterSplashSemanticsMs": 2636,
+          "file": "docs/qa/splash-v2/transition-393x852.png",
+          "pixel": [
+            184,
+            184,
+            203,
+            255
+          ],
+          "brightness": 190.33333333333334
+        },
+        "loginFile": "docs/qa/splash-v2/login-393x852.png",
+        "reducedMotionFile": "docs/qa/splash-v2/reduced-motion-393x852.png",
+        "signedOut": true,
+        "debugControlsAbsent": true
+      },
+      {
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "transition": {
+          "target": 2625,
+          "elapsedAfterSplashSemanticsMs": 2639,
+          "file": "docs/qa/splash-v2/transition-320x640.png",
+          "pixel": [
+            184,
+            184,
+            203,
+            255
+          ],
+          "brightness": 190.33333333333334
+        },
+        "loginFile": "docs/qa/splash-v2/login-320x640.png",
+        "reducedMotionFile": "docs/qa/splash-v2/reduced-motion-320x640.png",
+        "signedOut": true,
+        "debugControlsAbsent": true
+      }
+    ],
+    "desktop": "docs/qa/splash-v2/ready-desktop-1280x1000.png",
+    "errors": []
+  },
+  "limits": [
+    "Figma exports supplied no motion tracks; interpolation is authored between the approved storyboard anchors.",
+    "Exact-stage screenshots use an isolated host of the production SplashV2Scene. Live transition and Login screenshots use the real release entrypoint.",
+    "Capture offsets are after splash semantics appeared, not absolute application startup timestamps.",
+    "Small text-metric differences and a flexible progression row differ from absolute Figma label placement.",
+    "The tracking dot follows the curve; its center differs by approximately 2-3 pixels from the storyboard marker placement.",
+    "No Android hardware, screen reader or GPU frame-rate profiling."
+  ]
+}

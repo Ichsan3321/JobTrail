@@ -11,7 +11,9 @@ void main() {
     (tester) async {
       final store = JobTrailStore.demo();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await tester.tap(find.byKey(const ValueKey('nav-board')));
       await tester.pumpAndSettle();
       final card = find.byKey(const ValueKey('application-app-nusa'));
@@ -98,11 +100,11 @@ void main() {
         find.descendant(of: sheet, matching: find.text('v2')),
         findsOneWidget,
       );
-    await tester.tap(find.byTooltip('Tutup'));
-    await tester.pumpAndSettle();
-    expect(find.text('Portfolio updated · 2'), findsOneWidget);
-    await tester.tap(portfolioButton);
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Tutup'));
+      await tester.pumpAndSettle();
+      expect(find.text('Portfolio updated · 2'), findsOneWidget);
+      await tester.tap(portfolioButton);
+      await tester.pumpAndSettle();
       store.updateApplication(
         app.id,
         ApplicationDraft(

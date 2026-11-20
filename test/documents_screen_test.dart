@@ -15,7 +15,9 @@ void main() {
     final store = JobTrailStore.demo();
     addTearDown(store.dispose);
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
 
@@ -50,7 +52,9 @@ void main() {
     final store = JobTrailStore.demo();
     addTearDown(store.dispose);
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
 
@@ -75,7 +79,9 @@ void main() {
     final store = JobTrailStore.empty(clock: () => instant);
     addTearDown(store.dispose);
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('documents-add')));
@@ -103,7 +109,9 @@ void main() {
     final store = JobTrailStore.demo();
     addTearDown(store.dispose);
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('document-card-doc-cv')));
@@ -131,7 +139,9 @@ void main() {
     addTearDown(store.dispose);
     final originalId = store.documents.first.id;
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('document-menu-doc-cv')));
@@ -153,7 +163,9 @@ void main() {
     final store = JobTrailStore.demo();
     addTearDown(store.dispose);
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('document-menu-doc-cv')));
@@ -170,7 +182,9 @@ void main() {
     final store = JobTrailStore.empty();
     addTearDown(store.dispose);
 
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.tap(find.byKey(const ValueKey('nav-documents')));
     await tester.pumpAndSettle();
 

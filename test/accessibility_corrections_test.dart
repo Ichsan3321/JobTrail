@@ -12,7 +12,7 @@ void main() {
       'editable field semantics persist in ${edit ? 'Edit' : 'Add'} mode',
       (tester) async {
         final handle = tester.ensureSemantics();
-        await tester.pumpWidget(const JobTrailApp());
+        await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
         if (edit) {
           await selectTab(tester, 'board');
           await tapApplication(tester, 'app-nusa');
@@ -46,7 +46,7 @@ void main() {
     tester,
   ) async {
     final handle = tester.ensureSemantics();
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await tester.tap(find.byTooltip('Notifikasi'));
     await tester.pumpAndSettle();
     Finder ink(String text) => find
@@ -94,7 +94,7 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await tester.tap(find.byKey(const ValueKey('home-add')));
     await tester.pumpAndSettle();
     final back = find.byTooltip('Kembali');
@@ -116,7 +116,7 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await tester.tap(find.byTooltip('Notifikasi'));
     await tester.pumpAndSettle();
     final unread = find.textContaining('Belum dibaca').first;

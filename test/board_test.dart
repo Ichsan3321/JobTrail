@@ -13,7 +13,9 @@ Future<void> openBoard(WidgetTester tester, {JobTrailStore? store}) async {
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
-    store == null ? const JobTrailApp() : JobTrailApp(store: store),
+    store == null
+        ? const JobTrailApp(showAuthentication: false)
+        : JobTrailApp(showAuthentication: false, store: store),
   );
   await tester.tap(find.byKey(const ValueKey('nav-board')));
   await tester.pumpAndSettle();

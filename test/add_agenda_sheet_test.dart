@@ -34,7 +34,7 @@ Future<JobTrailStore> _open(
   addTearDown(tester.view.resetDevicePixelRatio);
   final s = store ?? JobTrailStore.demo();
   addTearDown(s.dispose);
-  await tester.pumpWidget(JobTrailApp(store: s));
+  await tester.pumpWidget(JobTrailApp(showAuthentication: false, store: s));
   await tester.tap(find.byKey(const ValueKey('nav-schedule')));
   await tester.pumpAndSettle();
   return s;
@@ -258,8 +258,8 @@ void main() {
     await tester.tap(_key('nav-home'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Lentera Tech'), 160);
-      await tester.ensureVisible(find.text('Lentera Tech'));
-      await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Lentera Tech'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Lentera Tech'));
     await tester.pumpAndSettle();
     expect(_key('S03'), findsOneWidget);

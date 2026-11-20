@@ -1,0 +1,204 @@
+{
+  "date": "2026-11-20",
+  "timezone": "Asia/Bangkok",
+  "branch": "feature/auth",
+  "baselineHead": "7fa8c23",
+  "baselinePassed": 195,
+  "tests": {
+    "passed": 213,
+    "failed": 0,
+    "skipped": 0,
+    "perFile": {
+      "accessibility_corrections_test.dart": 6,
+      "add_agenda_sheet_test.dart": 26,
+      "application_detail_screen_test.dart": 13,
+      "auth_audit_test.dart": 18,
+      "auth_test.dart": 8,
+      "board_test.dart": 14,
+      "detail_document_preview_test.dart": 1,
+      "documents_screen_test.dart": 12,
+      "frontend_smoke_test.dart": 5,
+      "home_test.dart": 3,
+      "jobtrail_store_test.dart": 13,
+      "reference_clock_integration_test.dart": 1,
+      "s04_application_form_test.dart": 10,
+      "schedule_date_range_test.dart": 13,
+      "schedule_screen_test.dart": 17,
+      "statistics_screen_test.dart": 42,
+      "widget_test.dart": 11
+    },
+    "successfulRun": true
+  },
+  "checks": {
+    "analyze": "PASS",
+    "releaseBuildMainEntrypoint": "PASS",
+    "diffCheck": "PASS"
+  },
+  "browser": {
+    "report": [
+      {
+        "screen": "login",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "register",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "verify",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "verify-error",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "forgot",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "sent",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "reset",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "login-validation",
+        "viewport": {
+          "width": 393,
+          "height": 852
+        },
+        "overflow": false
+      },
+      {
+        "screen": "login",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "register",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "verify",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "verify-error",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "forgot",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "sent",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "reset",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "login-validation",
+        "viewport": {
+          "width": 320,
+          "height": 640
+        },
+        "overflow": false
+      },
+      {
+        "screen": "release-probe",
+        "deliberatelyDisabledAuth": true,
+        "remainedOnLogin": true,
+        "debugControlsAbsent": true
+      },
+      {
+        "screen": "reduced-motion",
+        "onLogin": true
+      }
+    ],
+    "errors": [],
+    "note": "Browser viewport checks; keyboard insets and 2x text are covered by widget tests, not a native keyboard."
+  },
+  "splashSamples": [
+    {
+      "i": 2,
+      "elapsedAfterPlaceholderMs": 712
+    },
+    {
+      "i": 4,
+      "elapsedAfterPlaceholderMs": 1383
+    },
+    {
+      "i": 7,
+      "elapsedAfterPlaceholderMs": 2400
+    }
+  ],
+  "splashTimingCaveat": "Offsets are after the browser accessibility placeholder appeared, not exact animation times. Source storyboard geometry is checked by widget tests.",
+  "notVerified": [
+    "Exact Figma easing/prototype timing",
+    "Complete Figma pixel fidelity",
+    "Android runtime/native keyboard",
+    "TalkBack/VoiceOver",
+    "Separate profile runtime",
+    "Real authentication and recovery-token handling"
+  ]
+}

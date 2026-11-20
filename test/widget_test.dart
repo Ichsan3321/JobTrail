@@ -44,7 +44,7 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       for (final entry in {
         'home': 'S01',
         'board': 'S02',
@@ -101,7 +101,7 @@ void main() {
   testWidgets('primary action maintains a 48px touch target on desktop', (
     tester,
   ) async {
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     expect(
       tester.getSize(find.byKey(const ValueKey('home-add'))).height,
       greaterThanOrEqualTo(48),
@@ -110,7 +110,7 @@ void main() {
   testWidgets(
     'five destinations share one navbar and preserve selected tab on Back',
     (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       expect(find.byKey(const ValueKey('S01')), findsOneWidget);
       for (final entry in {
         'board': 'S02',
@@ -141,7 +141,7 @@ void main() {
   testWidgets(
     'edit uses same ID and cancel restores detail; add cancel restores origin',
     (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await tester.tap(find.byKey(const ValueKey('home-add')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('S04')), findsOneWidget);
@@ -165,7 +165,9 @@ void main() {
   ) async {
     final store = JobTrailStore.demo();
     addTearDown(store.dispose);
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     final navigation = tester
         .widget<AppShell>(find.byType(AppShell))
         .navigation;
@@ -197,7 +199,7 @@ void main() {
   testWidgets('related schedule and its detail resolve application IDs', (
     tester,
   ) async {
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await selectTab(tester, 'board');
     await tapApplication(tester, 'app-nusa');
     await tester.pumpAndSettle();
@@ -211,7 +213,7 @@ void main() {
   });
 
   testWidgets('missing detail/edit IDs fail safely', (tester) async {
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     final navigation = tester
         .widget<AppShell>(find.byType(AppShell))
         .navigation;
@@ -237,7 +239,9 @@ void main() {
   ) async {
     final store = JobTrailStore.empty();
     addTearDown(store.dispose);
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await selectTab(tester, 'board');
     expect(find.text('Belum ada lamaran.'), findsOneWidget);
     store.addApplication(draft());
@@ -266,7 +270,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       for (final tab in [
         'home',
         'board',

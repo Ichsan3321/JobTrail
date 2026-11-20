@@ -8,7 +8,7 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     final goal = find.byKey(const ValueKey('home-weekly-goal'));
     expect(
       tester.getSemantics(goal),
@@ -48,7 +48,7 @@ void main() {
     expect(find.byKey(const ValueKey('S01')), findsOneWidget);
   });
   testWidgets('notifications filter, mark read and dismiss', (tester) async {
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await tester.tap(find.byTooltip('Notifikasi'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tandai dibaca'));
@@ -61,7 +61,7 @@ void main() {
     expect(find.byKey(const ValueKey('S01')), findsOneWidget);
   });
   testWidgets('weekly activity selection and dismissal', (tester) async {
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await tester.tap(find.byKey(const ValueKey('home-weekly-goal')));
     await tester.pumpAndSettle();
     expect(find.text('Target Mingguan'), findsOneWidget);

@@ -21,7 +21,7 @@ Future<JobTrailStore> _openAt(WidgetTester tester, DateTime reference) async {
   addTearDown(tester.view.resetDevicePixelRatio);
   final store = JobTrailStore.empty(referenceDate: reference);
   addTearDown(store.dispose);
-  await tester.pumpWidget(JobTrailApp(store: store));
+  await tester.pumpWidget(JobTrailApp(showAuthentication: false, store: store));
   await tester.tap(_key('nav-schedule'));
   await tester.pumpAndSettle();
   return store;
