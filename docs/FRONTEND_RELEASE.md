@@ -15,8 +15,8 @@ Data hilang saat restart; dokumen hanya metadata; notifikasi lokal/demo. Autenti
 
 ## Draft PR
 
-**Base:** `develop`  
-**Compare:** `integration/frontend`  
+**Base:** `develop`
+**Compare:** `integration/frontend`
 **Title:** Integrate seven JobTrail frontend screens
 
 ### Description
