@@ -391,7 +391,23 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('nav-board')));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('application-app-nusa')),
+      160,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const ValueKey('S02')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('application-app-nusa')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('application-app-nusa')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('board-preview-detail')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('S03')), findsOneWidget);
     await tester.pageBack();
@@ -399,6 +415,8 @@ void main() {
     expect(find.byKey(const ValueKey('S02')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('application-app-nusa')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('board-preview-detail')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Agenda Terkait'));
     await tester.pumpAndSettle();
