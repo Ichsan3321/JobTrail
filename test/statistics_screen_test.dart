@@ -22,7 +22,7 @@ void main() {
   testWidgets('summary and interview caveat retain readable contrast', (
     tester,
   ) async {
-    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
     await goToStatistics(tester);
     final summaryText = tester.widget<Text>(find.text('Ringkasan lamaran'));
     final white = summaryText.style!.color!.computeLuminance();
@@ -54,7 +54,9 @@ void main() {
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
         final store = JobTrailStore.demo();
         addTearDown(store.dispose);
-        await tester.pumpWidget(JobTrailApp(store: store));
+        await tester.pumpWidget(
+          JobTrailApp(showAuthentication: false, store: store),
+        );
         await goToStatistics(tester);
         final summary = find.byKey(const ValueKey('statistics-summary'));
         await tester.scrollUntilVisible(
@@ -172,7 +174,7 @@ void main() {
 
   group('status distribution and rounding', () {
     testWidgets('demo fixture shows correct distribution', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       // Demo: 3 total — Applied 1, Screening 1, Interview 1
@@ -184,7 +186,7 @@ void main() {
     });
 
     testWidgets('percentages display correctly with rounding', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       // 1/3 ≈ 33%, each of the three statuses with count 1
@@ -195,7 +197,9 @@ void main() {
       final store = JobTrailStore.empty();
       addTearDown(store.dispose);
       store.addApplication(draft());
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       expect(find.text('100%'), findsOneWidget);
@@ -224,7 +228,9 @@ void main() {
         draft(company: 'Co B', appliedAt: DateTime.utc(2026, 11, 16)),
       );
 
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
       await tester.drag(find.byType(ListView).first, const Offset(0, -400));
       await tester.pumpAndSettle();
@@ -244,7 +250,9 @@ void main() {
       );
       store.changeStatus(id, RecruitmentStatus.offering);
 
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
       await tester.drag(find.byType(ListView).first, const Offset(0, -400));
       await tester.pumpAndSettle();
@@ -266,7 +274,9 @@ void main() {
       store.changeStatus(id, RecruitmentStatus.interview);
       store.changeStatus(id, RecruitmentStatus.rejected);
 
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
       await tester.drag(find.byType(ListView).first, const Offset(0, -400));
       await tester.pumpAndSettle();
@@ -299,7 +309,9 @@ void main() {
       store.addApplication(
         draft(company: 'Missing events', appliedAt: DateTime.utc(2026, 11, 2)),
       );
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
       await tester.drag(find.byType(ListView).first, const Offset(0, -400));
       await tester.pumpAndSettle();
@@ -398,7 +410,9 @@ void main() {
     ) async {
       final store = JobTrailStore.empty();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
       await tester.tap(find.text('1 Bulan Terakhir'));
       await tester.pumpAndSettle();
@@ -416,7 +430,9 @@ void main() {
     testWidgets('empty store shows empty state', (tester) async {
       final store = JobTrailStore.empty();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       expect(find.text('Total: 0'), findsOneWidget);
@@ -429,7 +445,9 @@ void main() {
     testWidgets('no NaN or crash with zero total', (tester) async {
       final store = JobTrailStore.empty();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       expect(tester.takeException(), isNull);
@@ -442,7 +460,7 @@ void main() {
 
   group('period filter interaction', () {
     testWidgets('all four period chips are displayed', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       expect(find.text('Saat Ini'), findsOneWidget);
@@ -466,7 +484,9 @@ void main() {
         draft(company: 'New Co', appliedAt: DateTime.utc(2026, 11, 15)),
       );
 
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       // All: 2 total
@@ -479,7 +499,7 @@ void main() {
     });
 
     testWidgets('filter chips have min 44px touch target', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       final chipFinder = find.text('Saat Ini');
@@ -501,7 +521,7 @@ void main() {
 
   group('distribution detail interaction', () {
     testWidgets('tapping a status row expands detail list', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       // Before tap: Lentera Tech should not be visible in distribution
@@ -519,7 +539,7 @@ void main() {
     });
 
     testWidgets('zero-count rows are not tappable', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       // Test/Psikotes has 0 in demo fixture — no arrow should appear
@@ -546,7 +566,9 @@ void main() {
         draft(company: 'Week3', appliedAt: DateTime.utc(2026, 11, 9)),
       );
 
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       // Should have 3 bars (weeks: Oct 26, Nov 2 [zero], Nov 9)
@@ -563,7 +585,9 @@ void main() {
     testWidgets('adding an application updates total', (tester) async {
       final store = JobTrailStore.empty();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       expect(find.text('Total: 0'), findsOneWidget);
@@ -577,7 +601,9 @@ void main() {
     testWidgets('deleting an application updates total', (tester) async {
       final store = JobTrailStore.demo();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       expect(find.text('Total: 3'), findsOneWidget);
@@ -591,7 +617,9 @@ void main() {
     testWidgets('status change updates distribution', (tester) async {
       final store = JobTrailStore.demo();
       addTearDown(store.dispose);
-      await tester.pumpWidget(JobTrailApp(store: store));
+      await tester.pumpWidget(
+        JobTrailApp(showAuthentication: false, store: store),
+      );
       await goToStatistics(tester);
 
       // Before: Interview = 1 (Nusa Digital)
@@ -622,7 +650,7 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
-        await tester.pumpWidget(const JobTrailApp());
+        await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
         await goToStatistics(tester);
 
         // Scroll through entire content.
@@ -637,7 +665,7 @@ void main() {
     }
 
     testWidgets('accessibility: filter chips have Semantics', (tester) async {
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await goToStatistics(tester);
 
       // Semantics node should exist for the filter chip.

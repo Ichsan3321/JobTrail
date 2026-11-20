@@ -11,7 +11,7 @@ import 'package:jobtrail/widgets/status_chip.dart';
 
 Future<AppNavigation> mountApp(WidgetTester tester, JobTrailStore store) async {
   addTearDown(store.dispose);
-  await tester.pumpWidget(JobTrailApp(store: store));
+  await tester.pumpWidget(JobTrailApp(showAuthentication: false, store: store));
   return tester.widget<AppShell>(find.byType(AppShell)).navigation;
 }
 
@@ -448,10 +448,7 @@ void main() {
       tester.widget<TextFormField>(companyField).controller!.text,
       store.applicationById(id)!.company,
     );
-    expect(
-      ModalRoute.of(tester.element(companyField))!.settings.arguments,
-      id,
-    );
+    expect(ModalRoute.of(tester.element(companyField))!.settings.arguments, id);
     expect(
       tester.widget<TextFormField>(positionField).controller!.text,
       store.applicationById(id)!.position,

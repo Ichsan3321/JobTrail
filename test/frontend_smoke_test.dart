@@ -20,7 +20,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       await selectTab(tester, 'board');
       for (final size in [
         const Size(393, 852),
@@ -65,7 +65,9 @@ void main() {
   ) async {
     final store = JobTrailStore.demo();
     addTearDown(store.dispose);
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     expect(find.byKey(const ValueKey('S01')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('home-add')));
     await tester.pumpAndSettle();
@@ -122,7 +124,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      await tester.pumpWidget(const JobTrailApp());
+      await tester.pumpWidget(const JobTrailApp(showAuthentication: false));
       for (final tab in [
         'home',
         'board',

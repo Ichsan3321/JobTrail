@@ -15,5 +15,5 @@ void main() {
       ], await rootBundle.loadString(font.value));
     });
   }
-  runApp(const JobTrailApp());
+  runApp(const JobTrailApp(showAuthentication: true));
 }

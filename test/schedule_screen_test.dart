@@ -17,7 +17,9 @@ Future<void> openSchedule(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
-    store == null ? const JobTrailApp() : JobTrailApp(store: store),
+    store == null
+        ? const JobTrailApp(showAuthentication: false)
+        : JobTrailApp(showAuthentication: false, store: store),
   );
   await tester.tap(find.byKey(const ValueKey('nav-schedule')));
   await tester.pumpAndSettle();

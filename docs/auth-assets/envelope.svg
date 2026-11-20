@@ -1,0 +1,7 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Envelope">
+<path id="Vector" d="M63 13H17C10.3726 13 5 18.3726 5 25V55C5 61.6274 10.3726 67 17 67H63C69.6274 67 75 61.6274 75 55V25C75 18.3726 69.6274 13 63 13Z" fill="#EEEFFF" stroke="#5B5BF0" stroke-width="3"/>
+<path id="Vector_2" d="M11 23L40 44L69 23" stroke="#5B5BF0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="Vector_3" d="M64 25C68.9706 25 73 20.9706 73 16C73 11.0294 68.9706 7 64 7C59.0294 7 55 11.0294 55 16C55 20.9706 59.0294 25 64 25Z" fill="#34C99F"/>
+</g>
+</svg>

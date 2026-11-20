@@ -58,7 +58,9 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(JobTrailApp(store: store));
+    await tester.pumpWidget(
+      JobTrailApp(showAuthentication: false, store: store),
+    );
     await tester.pumpAndSettle();
     expect(find.textContaining('Clock location 0'), findsNothing);
     expect(find.textContaining('Clock location 3'), findsNothing);
