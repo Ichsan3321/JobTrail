@@ -183,6 +183,138 @@ void main() {
   // Empty datasets and division-by-zero
   // ─────────────────────────────────────────────────────────────────────────
 
+  group('recorded interview cohort', () {
+    testWidgets('warns about missing history and filters the cohort', (
+      tester,
+    ) async {
+      final store = JobTrailStore.empty();
+      addTearDown(store.dispose);
+      final old = store.addApplication(
+        draft(company: 'Old', appliedAt: DateTime.utc(2026, 10, 16)),
+      );
+      store.changeStatus(old, RecruitmentStatus.interview);
+      final recent = store.addApplication(
+        draft(company: 'Recent', appliedAt: DateTime.utc(2026, 11, 1)),
+      );
+      store.changeStatus(recent, RecruitmentStatus.interview);
+      store.changeStatus(recent, RecruitmentStatus.rejected);
+      store.changeStatus(recent, RecruitmentStatus.interview);
+      store.addApplication(
+        draft(company: 'Missing events', appliedAt: DateTime.utc(2026, 11, 2)),
+      );
+      await tester.pumpWidget(JobTrailApp(store: store));
+      await goToStatistics(tester);
+      await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('2 dari 3 lamaran'), findsOneWidget);
+      await tester.drag(find.byType(ListView).first, const Offset(0, 400));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 Bulan Terakhir'));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1 dari 2 lamaran'), findsOneWidget);
+      expect(find.text('Interview Conversion (tercatat)'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Riwayat yang belum tercatat dapat membuat angka sebenarnya lebih tinggi',
+        ),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('weekly trend reporting interval', () {
+    test('includes boundary, gap and reference weeks in year order', () {
+      final buckets = weeklyTrendBuckets(
+        start: DateTime.utc(2026, 12, 23),
+        referenceDate: DateTime.utc(2027, 1, 19),
+        appliedDates: [
+          DateTime.utc(2026, 12, 22),
+          DateTime.utc(2026, 12, 23),
+          DateTime.utc(2027, 1, 5),
+          DateTime.utc(2027, 1, 19),
+          DateTime.utc(2027, 1, 20),
+        ],
+      );
+      expect(buckets, {
+        DateTime.utc(2026, 12, 21): 1,
+        DateTime.utc(2026, 12, 28): 0,
+        DateTime.utc(2027, 1, 4): 1,
+        DateTime.utc(2027, 1, 11): 0,
+        DateTime.utc(2027, 1, 18): 1,
+      });
+      expect(buckets.keys.toList(), [
+        DateTime.utc(2026, 12, 21),
+        DateTime.utc(2026, 12, 28),
+        DateTime.utc(2027, 1, 4),
+        DateTime.utc(2027, 1, 11),
+        DateTime.utc(2027, 1, 18),
+      ]);
+    });
+
+    test(
+      'empty bounded period has zero weeks; unbounded empty has no range',
+      () {
+        final reference = DateTime.utc(2026, 11, 17);
+        expect(
+          weeklyTrendBuckets(
+            start: DateTime.utc(2026, 11, 2),
+            referenceDate: reference,
+            appliedDates: [],
+          ),
+          {
+            DateTime.utc(2026, 11, 2): 0,
+            DateTime.utc(2026, 11, 9): 0,
+            DateTime.utc(2026, 11, 16): 0,
+          },
+        );
+        expect(
+          weeklyTrendBuckets(referenceDate: reference, appliedDates: []),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'unbounded period runs from earliest historical date to reference',
+      () {
+        expect(
+          weeklyTrendBuckets(
+            referenceDate: DateTime.utc(2026, 11, 17),
+            appliedDates: [
+              DateTime.utc(2026, 11, 4),
+              DateTime.utc(2026, 11, 18),
+            ],
+          ),
+          {
+            DateTime.utc(2026, 11, 2): 1,
+            DateTime.utc(2026, 11, 9): 0,
+            DateTime.utc(2026, 11, 16): 0,
+          },
+        );
+      },
+    );
+
+    testWidgets('empty filtered period still displays zero trend', (
+      tester,
+    ) async {
+      final store = JobTrailStore.empty();
+      addTearDown(store.dispose);
+      await tester.pumpWidget(JobTrailApp(store: store));
+      await goToStatistics(tester);
+      await tester.tap(find.text('1 Bulan Terakhir'));
+      await tester.pumpAndSettle();
+      expect(find.text('Lamaran per Minggu'), findsOneWidget);
+      expect(
+        find.text(
+          'Belum ada lamaran pada periode ini.\nTambahkan lamaran untuk melihat statistik.',
+        ),
+        findsOneWidget,
+      );
+    });
+  });
+
   group('empty dataset and division-by-zero', () {
     testWidgets('empty store shows empty state', (tester) async {
       final store = JobTrailStore.empty();

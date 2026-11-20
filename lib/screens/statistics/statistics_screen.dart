@@ -48,6 +48,46 @@ DateTime subtractMonths(DateTime date, int months) {
 // Screen
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Monday buckets for the inclusive reporting interval. The unbounded period
+/// starts with its earliest historical application; without one it has no range.
+/// Boundary weeks count only dates inside the interval through referenceDate.
+@visibleForTesting
+Map<DateTime, int> weeklyTrendBuckets({
+  required Iterable<DateTime> appliedDates,
+  required DateTime referenceDate,
+  DateTime? start,
+}) {
+  final dates = appliedDates
+      .where(
+        (date) =>
+            !date.isAfter(referenceDate) &&
+            (start == null || !date.isBefore(start)),
+      )
+      .toList();
+  if (start != null && start.isAfter(referenceDate)) return {};
+  if (start == null && dates.isEmpty) return {};
+  DateTime monday(DateTime date) {
+    final day = AppDates.date(date.year, date.month, date.day);
+    return day.subtract(Duration(days: day.weekday - 1));
+  }
+
+  final firstDate = start ?? dates.reduce((a, b) => a.isBefore(b) ? a : b);
+  final lastWeek = monday(referenceDate);
+  final buckets = <DateTime, int>{};
+  for (
+    var week = monday(firstDate);
+    !week.isAfter(lastWeek);
+    week = week.add(const Duration(days: 7))
+  ) {
+    buckets[week] = 0;
+  }
+  for (final date in dates) {
+    final week = monday(date);
+    buckets[week] = buckets[week]! + 1;
+  }
+  return buckets;
+}
+
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key, required this.store});
   final JobTrailStore store;
@@ -141,6 +181,9 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
             const SizedBox(height: AppSpacing.lg),
 
             // ── Trend section ──
+          ],
+          if (total > 0 || start != null) ...[
+            const SizedBox(height: AppSpacing.lg),
             _SectionTitle(title: 'Tren Lamaran'),
             const SizedBox(height: AppSpacing.sm),
             _TrendCard(store: store, start: start),
@@ -531,7 +574,7 @@ class _AchievementMetrics extends StatelessWidget {
     final interviewConversionCount = appIdsWithInterview
         .intersection(periodAppIds)
         .length;
-    final hasConversionData = historyEntries.isNotEmpty && total > 0;
+    final hasConversionData = total > 0;
     final conversionRate = hasConversionData
         ? (interviewConversionCount / total * 100)
         : null;
@@ -560,24 +603,23 @@ class _AchievementMetrics extends StatelessWidget {
             _MetricTile(
               icon: Icons.trending_up_rounded,
               iconColor: const Color(0xFF0369A1),
-              label: 'Interview Conversion',
+              label: 'Interview Conversion (tercatat)',
               value: '${conversionRate.toStringAsFixed(0)}%',
               subtitle:
                   '$interviewConversionCount dari $total lamaran'
-                  ' memiliki riwayat interview',
+                  ' memiliki riwayat interview tercatat',
             ),
-            if (!_historyIsComplete(periodAppIds, historyEntries))
-              Padding(
-                padding: const EdgeInsets.only(left: 48, bottom: AppSpacing.xs),
-                child: Text(
-                  'Data riwayat mungkin tidak lengkap',
-                  style: AppTypography.label.copyWith(
-                    fontWeight: FontWeight.w400,
-                    fontSize: 10,
-                    color: AppColors.peach,
-                  ),
+            Padding(
+              padding: const EdgeInsets.only(left: 48, bottom: AppSpacing.xs),
+              child: Text(
+                'Riwayat yang belum tercatat dapat membuat angka sebenarnya lebih tinggi.',
+                style: AppTypography.label.copyWith(
+                  fontWeight: FontWeight.w400,
+                  fontSize: 10,
+                  color: AppColors.peach,
                 ),
               ),
+            ),
             const Divider(height: AppSpacing.lg, color: AppColors.border),
           ],
 
@@ -604,19 +646,6 @@ class _AchievementMetrics extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  /// Heuristic: history is "complete" if every app in the period has at least
-  /// one history entry (the initial Applied event).
-  bool _historyIsComplete(
-    Set<String> periodAppIds,
-    List<dynamic> historyEntries,
-  ) {
-    final appIdsWithHistory = <String>{};
-    for (final entry in historyEntries) {
-      appIdsWithHistory.add((entry as dynamic).applicationId as String);
-    }
-    return periodAppIds.every(appIdsWithHistory.contains);
   }
 }
 
@@ -713,32 +742,15 @@ class _TrendCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final apps = store.applicationsInPeriod(start: start);
-    if (apps.isEmpty) {
+    final weekBuckets = weeklyTrendBuckets(
+      appliedDates: store.applications.map((app) => app.appliedAt),
+      referenceDate: store.referenceDate,
+      start: start,
+    );
+    if (weekBuckets.isEmpty) {
       return const EmptyState(message: 'Belum ada data tren pada periode ini.');
     }
-
-    // Group applications by week (Monday-based).
-    final weekBuckets = <DateTime, int>{};
-    for (final app in apps) {
-      final weekStart = app.appliedAt.subtract(
-        Duration(days: app.appliedAt.weekday - 1),
-      );
-      final key = AppDates.date(weekStart.year, weekStart.month, weekStart.day);
-      weekBuckets[key] = (weekBuckets[key] ?? 0) + 1;
-    }
-
-    // Fill in zero-application weeks between first and last (JT-BUG-019).
-    final allWeeks = weekBuckets.keys.toList()..sort();
-    final firstWeek = allWeeks.first;
-    final lastWeek = allWeeks.last;
-    final filledWeeks = <DateTime>[];
-    var current = firstWeek;
-    while (!current.isAfter(lastWeek)) {
-      filledWeeks.add(current);
-      weekBuckets.putIfAbsent(current, () => 0);
-      current = current.add(const Duration(days: 7));
-    }
+    final filledWeeks = weekBuckets.keys.toList();
 
     final maxCount = weekBuckets.values.fold<int>(0, (a, b) => math.max(a, b));
 
@@ -758,7 +770,7 @@ class _TrendCard extends StatelessWidget {
           Text('Lamaran per Minggu', style: AppTypography.label),
           const SizedBox(height: AppSpacing.md),
           SizedBox(
-            height: 140,
+            height: 110 + MediaQuery.textScalerOf(context).scale(30),
             child: useScroll
                 ? SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
