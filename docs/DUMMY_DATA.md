@@ -13,7 +13,7 @@ Review: Ziyaad + Fachriza (fixture/metrik), Rifqi (status), Ichsan (integrasi).
 - Minggu target: Senin 16 November sampai sebelum Senin 23 November 2026; target 8.
 - `JobTrailStore.demo()` menggunakan clock tetap referenceInstant untuk mutasi demo.
   `JobTrailStore.empty(referenceDate: ...)` memakai 09:00 WIB pada tanggal acuan itu.
-  Clock dapat diinjeksi; jangan mengganti dengan DateTime.now di setiap screen.
+  `referenceInstantUtc` mengekspos clock terinjeksi dalam UTC untuk klasifikasi agenda dan timestamp metadata. Agenda sebelum instant ini lewat; tepat pada atau setelahnya belum lewat. Jangan menggunakan DateTime.now di setiap screen.
 - appliedAt/weekStart/referenceDate adalah civil date UTC midnight: buat dengan
   `AppDates.date(year, month, day)`, termasuk nilai dari date picker. Jangan
   memakai `.toUtc()` pada midnight lokal picker untuk membuat date-only.
@@ -58,20 +58,17 @@ Hapus dokumen yang dipakai ditolak sampai seluruh referensi dilepas lewat edit.
 
 - Total = jumlah lamaran dalam `applicationsInPeriod(start:, end:)`.
 - Interval tanggal = start inklusif, end eksklusif, filter berdasarkan appliedAt.
-  API menyediakan batas eksplisit; pemetaan label UI Saat Ini/1/2/3 Bulan Terakhir
-  belum dibekukan. Ziyaad perlu mengonfirmasi kalender vs rolling bersama koordinator.
-  Placeholder statistik saat ini menampilkan seluruh data, tanpa filter periode.
+  Saat Ini memakai seluruh data; 1/2/3 Bulan Terakhir menggunakan pengurangan bulan kalender dari referenceDate dengan penyesuaian akhir bulan.
 - Current interview/offering/distribusi = count current enum, bukan jumlah agenda
   atau jumlah event history. Distribusi memuat enam status, termasuk nol.
-- Persentase distribusi nantinya = count/total; total nol tampil 0/empty, bukan NaN.
+- Persentase distribusi = count/total; total nol tampil 0/empty, bukan NaN.
 - Weekly achieved = lamaran baru pada [weekStart, weekStart+7 hari), target >= 0.
   Progress = clamp(achieved/target, 0, 1); target nol menghasilkan 0.
   Angka achieved boleh melebihi target, tidak dipotong.
 - Baseline fixture: total 3; Applied 1, Screening 1, Test 0, Interview 1,
   Offering 0, Rejected 0; capaian minggu anchor **0/8**.
 - Angka desain 24/3/1, 5/8 dan streak 4 minggu tidak dijadikan agregasi palsu.
-  Interview conversion, response rate, streak dan tren belum diimplementasikan;
-  perlu definisi Ziyaad dan data pendukung. Current interview bukan conversion.
+  Konversi interview tercatat = lamaran dalam cohort periode yang memiliki event Interview eksplisit dibagi jumlah cohort; history yang tidak tercatat dapat membuat hasil lebih rendah. Tren menghitung lamaran per minggu Senin, termasuk minggu kosong. Response rate dan streak belum tersedia. Current interview bukan conversion.
 
 ## Konflik yang harus diputuskan
 

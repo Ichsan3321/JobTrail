@@ -3,6 +3,10 @@
 Baca seluruh `AGENTS.md` sebelum bekerja. Dokumen ini membantu onboarding,
 tidak mengganti aturan kepemilikan dan approval integrator.
 
+## Konteks integrasi saat ini
+
+Tujuh screen telah terintegrasi pada `integration/frontend` sebagai kandidat PR ke `develop`. Instruksi berikut tetap berlaku untuk perubahan lanjutan; referensi fondasi dan feature branch adalah konteks historis, bukan status screen saat ini.
+
 ## Sebelum membuka feature branch
 
 Koordinator mereview kontrak fondasi bersama PIC, kemudian mengonfirmasi baseline
@@ -30,9 +34,8 @@ PR target `develop`, integrator memeriksa dan menyetujui merge.
 1. Tetapkan PIC, task ID, screen/state dan deliverable dari master tracker.
 2. Baca ARCHITECTURE, GSM, DUMMY_DATA dan kontrak Dart aktual.
 3. Inspeksi frame/state Figma final milik PIC atau gunakan export berizin.
-   Baru S01 yang sudah diinspeksi pada pekerjaan fondasi ini; tidak ada klaim
-   tujuh screen sudah cocok. Resolve konflik yang tercatat sebelum implementasi final.
-4. Ganti isi placeholder direktori sendiri. Pertahankan constructor store/navigation.
+   Inspeksi selektif tujuh frame dan beberapa state sudah dilakukan; itu bukan sign-off visual. Resolve konflik yang tercatat sebelum perubahan desain.
+4. Ubah screen yang dikoordinasikan dengan pemiliknya. Pertahankan constructor store/navigation.
    Dengarkan store dengan ListenableBuilder; jangan membuat fixture/repository sendiri.
 5. Pakai komponen shared dan tema. Screen tab tidak membuat navbar/MaterialApp sendiri.
    Routing detail/edit memakai ID. S04 mengirim ApplicationDraft lengkap.
@@ -57,7 +60,7 @@ Buka http://localhost:8080 untuk web-server. Uji 393×852 dan ukuran lain, text 
 scroll sampai bawah, lima tab, Back, ID berbeda, kosong, invalid, batal, hapus,
 keyboard dan insets. Uji Android jika device/emulator tersedia, laporkan jika belum.
 Jangan menghapus test agar lulus atau memformat file rekan secara massal.
-Test fondasi memverifikasi state dan route contract; bukan bukti form/UI final selesai.
+Widget/regression tests mencakup interaksi form dan lintas screen; bukan bukti QA visual atau Android lengkap.
 
 ## Handoff dan PR
 
@@ -66,5 +69,4 @@ cara menjalankan, command dan hasil aktual, blocker, dampak lintas screen, bukti
 status yang disarankan. PR mencantumkan screenshot running aktual dan shared files.
 Tidak ada commit/PR/screenshot/logbook yang boleh dikarang.
 Koordinator mengisi tracker bersama setelah bukti dan review tersedia.
-Gunakan status **Review** untuk fondasi yang menunggu tinjauan bersama; belum
-menyatakan tujuh screen final selesai. Jangan commit cache/build/secrets.
+Gunakan status **Review** untuk kandidat integrasi yang menunggu tinjauan bersama; hasil QA dan sign-off visual harus dicatat secara terpisah. Jangan commit cache/build/secrets.

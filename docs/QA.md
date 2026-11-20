@@ -1,4 +1,25 @@
-# Hasil QA fondasi
+# QA integrasi frontend Week 12
+
+Kandidat `integration/frontend` untuk review ke `develop`. Ini bukti frontend demo, bukan validasi backend atau kesiapan production.
+
+Verifikasi ulang dokumentasi pada 20 November 2026, HEAD `46967a2`: `flutter analyze` bersih dan `flutter test` 187 lulus.
+
+## Bukti saat ini
+
+| Jenis | Bukti dan batas |
+|---|---|
+| Automated | Baseline yang dilaporkan: `flutter analyze` bersih, `flutter test` 187 lulus, `git diff --check` lulus. Widget/regression tests mencakup tujuh screen, interaksi lintas screen, validasi, back/cancel, clock dan skenario responsif terpilih. Widget test bukan QA browser atau Android. |
+| Manual Chrome | Menurut laporan project lead, Board dan Statistik dilihat pada 393 x 852 dan 320 x 640. Resize Board, scroll filter dan scroll vertikal Board/Statistik diperiksa. Overflow summary Board yang pernah muncul tidak terulang pada pemeriksaan terakhir; belum dibuktikan hilang untuk semua kondisi. |
+| Figma | Audit selektif memakai Figma MCP pada tujuh frame utama, Notifications, Weekly Goal dan Add Agenda. Statistik dibandingkan dengan node 111:5677 untuk implementasi header/summary. Ini bukan verifikasi pixel atau sign-off semua state. |
+| Belum dilakukan | QA browser ter-render menyeluruh untuk tujuh screen, Android runtime, screen reader dan QA aksesibilitas perangkat lengkap. Tidak ada klaim screenshot terbaru atau automated browser screenshots. |
+
+Batas hasil saat ini dan kriteria review ada di [FRONTEND_RELEASE](FRONTEND_RELEASE.md). Laporan manual di atas adalah bukti yang diberikan project lead; tidak direproduksi ulang dalam pembaruan dokumentasi ini.
+
+## Arsip fondasi
+
+Bukti dan screenshot berikut berasal dari fondasi 17 November, sebelum integrasi tujuh screen. Jangan gunakan sebagai screenshot atau hasil QA frontend terkini.
+
+# Arsip: hasil QA fondasi 17 November 2026
 
 17 November 2026 · Ichsan/integrator (implementasi dibantu coding agent)
 Branch `develop` · Task ID W12 belum tersedia · Status disarankan: **Review**.
