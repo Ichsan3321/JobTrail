@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
+import 'package:jobtrail/core/constants/app_tokens.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
 import 'package:jobtrail/models/recruitment_status.dart';
 import 'package:jobtrail/screens/statistics/statistics_screen.dart';
@@ -18,6 +19,102 @@ Future<void> goToStatistics(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('summary and interview caveat retain readable contrast', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const JobTrailApp());
+    await goToStatistics(tester);
+    final summaryText = tester.widget<Text>(find.text('Ringkasan lamaran'));
+    final white = summaryText.style!.color!.computeLuminance();
+    final purple = AppColors.primary.computeLuminance();
+    expect((white + .05) / (purple + .05), greaterThanOrEqualTo(4.5));
+    final caveat = find.textContaining('Riwayat yang belum tercatat');
+    await tester.scrollUntilVisible(
+      caveat,
+      150,
+      scrollable: find.byType(Scrollable).hitTestable().first,
+    );
+    final color = tester.widget<Text>(caveat).style!.color!;
+    expect(
+      (Colors.white.computeLuminance() + .05) /
+          (color.computeLuminance() + .05),
+      greaterThanOrEqualTo(4.5),
+    );
+  });
+  for (final size in [const Size(393, 852), const Size(320, 640)]) {
+    for (final scale in [1.0, 1.5, 2.0]) {
+      testWidgets('summary remains readable at $size scale $scale', (
+        tester,
+      ) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final store = JobTrailStore.demo();
+        addTearDown(store.dispose);
+        await tester.pumpWidget(JobTrailApp(store: store));
+        await goToStatistics(tester);
+        final summary = find.byKey(const ValueKey('statistics-summary'));
+        await tester.scrollUntilVisible(
+          summary,
+          150,
+          scrollable: find
+              .ancestor(
+                of: find.byKey(const ValueKey('S07')),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await tester.pumpAndSettle();
+        expect(summary, findsOneWidget);
+        final decoration =
+            tester.widget<Container>(summary).decoration! as BoxDecoration;
+        expect(decoration.color, AppColors.primary);
+        for (final entry in {
+          'total': ('3', 'Total Lamaran'),
+          'interview': ('1', 'Interview saat ini'),
+          'offering': ('0', 'Offering'),
+        }.entries) {
+          final metric = find.byKey(
+            ValueKey('statistics-summary-${entry.key}'),
+          );
+          expect(
+            find.descendant(of: metric, matching: find.text(entry.value.$1)),
+            findsOneWidget,
+          );
+          final label = find.descendant(
+            of: metric,
+            matching: find.text(entry.value.$2),
+          );
+          expect(label, findsOneWidget);
+          expect(
+            tester.widget<Text>(label).overflow,
+            isNot(TextOverflow.ellipsis),
+          );
+          expect(tester.widget<Text>(label).maxLines, isNull);
+        }
+        store.changeStatus('app-nusa', RecruitmentStatus.offering);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('statistics-summary-interview')),
+            matching: find.text('0'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('statistics-summary-offering')),
+            matching: find.text('1'),
+          ),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
   // ─────────────────────────────────────────────────────────────────────────
   // subtractMonths unit tests (JT-BUG-018)
   // ─────────────────────────────────────────────────────────────────────────

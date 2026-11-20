@@ -132,15 +132,62 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
         ),
         children: [
           // ── Header ──
-          Text(
-            'Statistik',
-            key: const ValueKey('S07'),
-            style: AppTypography.heading,
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            'Pantau progres lamaran kerjamu',
-            style: AppTypography.body.copyWith(color: AppColors.gray),
+          Row(
+            children: [
+              ExcludeSemantics(
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(13),
+                          child: Image.asset(
+                            'assets/home/logo-background.png',
+                            fit: BoxFit.fill,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 22.3,
+                        top: 9.1,
+                        width: 7,
+                        height: 7,
+                        child: Image.asset('assets/home/logo-dot.png'),
+                      ),
+                      Positioned(
+                        left: 14.3,
+                        top: 17.6,
+                        width: 13.2,
+                        height: 18.7,
+                        child: Image.asset('assets/home/logo-letter.png'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Statistik',
+                      key: const ValueKey('S07'),
+                      style: AppTypography.heading,
+                    ),
+                    Text(
+                      'Pantau perjalanan lamaranmu',
+                      style: AppTypography.body.copyWith(
+                        color: AppColors.gray,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           // Hidden total text for existing test compatibility.
           Text(
@@ -280,38 +327,93 @@ class _SummaryRow extends StatelessWidget {
   final int total;
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Expanded(
-        child: _SummaryCard(
-          label: 'Total Lamaran',
-          value: '$total',
-          icon: Icons.work_outline_rounded,
-          color: AppColors.primary,
-          backgroundColor: AppColors.primaryLight,
+  Widget build(BuildContext context) => Container(
+    key: const ValueKey('statistics-summary'),
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: AppColors.primary,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      boxShadow: [
+        BoxShadow(
+          color: AppColors.primary.withValues(alpha: 0.22),
+          blurRadius: 10,
+          offset: const Offset(0, 6),
         ),
-      ),
-      const SizedBox(width: AppSpacing.sm),
-      Expanded(
-        child: _SummaryCard(
-          label: 'Interview',
-          value: '${distribution[RecruitmentStatus.interview] ?? 0}',
-          icon: Icons.groups_outlined,
-          color: const Color(0xFF0369A1),
-          backgroundColor: const Color(0xFFE0F2FE),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Ringkasan lamaran',
+                style: AppTypography.body.copyWith(
+                  color: AppColors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            const ExcludeSemantics(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.mint,
+                  shape: BoxShape.circle,
+                ),
+                child: SizedBox.square(dimension: 10),
+              ),
+            ),
+          ],
         ),
-      ),
-      const SizedBox(width: AppSpacing.sm),
-      Expanded(
-        child: _SummaryCard(
-          label: 'Offering',
-          value: '${distribution[RecruitmentStatus.offering] ?? 0}',
-          icon: Icons.check_circle_outline_rounded,
-          color: const Color(0xFF047857),
-          backgroundColor: const Color(0xFFD1FAE5),
+        const SizedBox(height: 14),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stacked =
+                constraints.maxWidth < 250 ||
+                MediaQuery.textScalerOf(context).scale(12) > 18;
+            final metrics = [
+              _SummaryCard(
+                label: 'Total Lamaran',
+                value: '$total',
+                id: 'total',
+              ),
+              _SummaryCard(
+                label: 'Interview saat ini',
+                value: '${distribution[RecruitmentStatus.interview] ?? 0}',
+                id: 'interview',
+              ),
+              _SummaryCard(
+                label: 'Offering',
+                value: '${distribution[RecruitmentStatus.offering] ?? 0}',
+                id: 'offering',
+              ),
+            ];
+            if (stacked) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < metrics.length; i++) ...[
+                    if (i > 0) const SizedBox(height: AppSpacing.sm),
+                    metrics[i],
+                  ],
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < metrics.length; i++) ...[
+                  if (i > 0) const SizedBox(width: AppSpacing.xs),
+                  Expanded(child: metrics[i]),
+                ],
+              ],
+            );
+          },
         ),
-      ),
-    ],
+      ],
+    ),
   );
 }
 
@@ -319,50 +421,34 @@ class _SummaryCard extends StatelessWidget {
   const _SummaryCard({
     required this.label,
     required this.value,
-    required this.icon,
-    required this.color,
-    required this.backgroundColor,
+    required this.id,
   });
   final String label;
   final String value;
-  final IconData icon;
-  final Color color;
-  final Color backgroundColor;
+  final String id;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(AppSpacing.md),
-    decoration: BoxDecoration(
-      color: AppColors.white,
-      borderRadius: BorderRadius.circular(AppRadius.card),
-      border: Border.all(color: AppColors.border),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: backgroundColor,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, size: 20, color: color),
+  Widget build(BuildContext context) => Column(
+    key: ValueKey('statistics-summary-$id'),
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        value,
+        style: AppTypography.heading.copyWith(
+          fontSize: 28,
+          color: AppColors.white,
+          fontWeight: FontWeight.w700,
         ),
-        const SizedBox(height: AppSpacing.sm),
-        Text(
-          value,
-          style: AppTypography.heading.copyWith(fontSize: 22, color: color),
+      ),
+      const SizedBox(height: 5),
+      Text(
+        label,
+        style: AppTypography.label.copyWith(
+          color: AppColors.white,
+          fontWeight: FontWeight.w500,
         ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: AppTypography.label.copyWith(fontSize: 11),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    ),
+      ),
+    ],
   );
 }
 
