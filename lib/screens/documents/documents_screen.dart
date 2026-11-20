@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/app_document.dart';
-import '../../models/application.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/input_field.dart';
+import 'document_preview_sheet.dart';
 
 class DocumentsScreen extends StatefulWidget {
   const DocumentsScreen({super.key, required this.store});
@@ -293,22 +293,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Future<void> _showPreview(AppDocument document) async {
-    final linkedApplications = store.applications
-        .where((application) => application.documentIds.contains(document.id))
-        .toList();
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => _DocumentPreviewSheet(
-        document: document,
-        linkedApplications: linkedApplications,
-      ),
-    );
+    await showDocumentPreview(context, store: store, documentId: document.id);
   }
 
   Future<void> _openDocumentForm([AppDocument? existing]) async {
@@ -623,7 +608,7 @@ class _DocumentCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  _formatDate(document.updatedAt),
+                  formatDocumentDate(document.updatedAt),
                   textAlign: TextAlign.end,
                   style: const TextStyle(
                     fontSize: 10,
@@ -640,150 +625,6 @@ class _DocumentCard extends StatelessWidget {
 }
 
 enum _DocumentAction { preview, edit, delete }
-
-class _DocumentPreviewSheet extends StatelessWidget {
-  const _DocumentPreviewSheet({
-    required this.document,
-    required this.linkedApplications,
-  });
-
-  final AppDocument document;
-  final List<Application> linkedApplications;
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    key: const ValueKey('document-preview-sheet'),
-    top: false,
-    child: SingleChildScrollView(
-      key: const ValueKey('document-preview-scroll'),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 38,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.border,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Pratinjau Metadata',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.navy,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Tutup',
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _MetadataRow(label: 'Judul', value: document.title),
-          _MetadataRow(label: 'Kategori', value: document.category.label),
-          _MetadataRow(label: 'Nama file', value: document.fileName),
-          _MetadataRow(label: 'Versi', value: 'v${document.version}'),
-          _MetadataRow(
-            label: 'Diperbarui',
-            value: _formatDate(document.updatedAt),
-          ),
-          if (document.notes.trim().isNotEmpty)
-            _MetadataRow(label: 'Catatan', value: document.notes),
-          if (linkedApplications.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            const Text(
-              'Terhubung dengan lamaran',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppColors.navy,
-              ),
-            ),
-            const SizedBox(height: 4),
-            for (final application in linkedApplications)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: Text(
-                  '• ${application.company} — ${application.position}',
-                  style: const TextStyle(fontSize: 12, color: AppColors.gray),
-                ),
-              ),
-          ],
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.primaryLight,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Text(
-              'Ini hanya pratinjau metadata. File PDF/DOCX belum diunggah '
-              'dan belum dapat dibuka.',
-              style: TextStyle(fontSize: 11, color: AppColors.primaryDark),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _MetadataRow extends StatelessWidget {
-  const _MetadataRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 7),
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final labelText = Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: AppColors.gray),
-        );
-        final valueText = Text(
-          value,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.navy,
-          ),
-        );
-        if (constraints.maxWidth < 280 ||
-            MediaQuery.textScalerOf(context).scale(12) > 18) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [labelText, const SizedBox(height: 4), valueText],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(width: 94, child: labelText),
-            const SizedBox(width: 8),
-            Expanded(child: valueText),
-          ],
-        );
-      },
-    ),
-  );
-}
 
 class _DocumentFormValue {
   const _DocumentFormValue({
@@ -989,23 +830,4 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     }
     Navigator.pop(context, true);
   }
-}
-
-String _formatDate(DateTime instant) {
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'Mei',
-    'Jun',
-    'Jul',
-    'Agu',
-    'Sep',
-    'Okt',
-    'Nov',
-    'Des',
-  ];
-  final wib = instant.toUtc().add(const Duration(hours: 7));
-  return '${wib.day.toString().padLeft(2, '0')} ${months[wib.month - 1]} ${wib.year}';
 }

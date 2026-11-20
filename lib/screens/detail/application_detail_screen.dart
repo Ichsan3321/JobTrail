@@ -5,13 +5,13 @@ import '../../core/constants/app_tokens.dart';
 import '../../core/routes/app_navigation.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/agenda.dart';
-import '../../models/app_document.dart';
 import '../../models/application.dart';
 import '../../models/recruitment_status.dart';
 import '../../models/status_history.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/status_chip.dart';
 import '../schedule/add_agenda_sheet.dart';
+import '../documents/document_preview_sheet.dart';
 
 class ApplicationDetailScreen extends StatelessWidget {
   const ApplicationDetailScreen({
@@ -143,16 +143,11 @@ class ApplicationDetailScreen extends StatelessWidget {
           (agenda) => !agenda.scheduledAt.isBefore(store.referenceInstantUtc),
         )
         .firstOrNull;
-    final documents = application.documentIds
-        .map(store.documentById)
-        .whereType<AppDocument>()
-        .toList();
-
     return ListView(
       key: const ValueKey('detail-scroll'),
       padding: const EdgeInsets.fromLTRB(20, 0, 20, AppSpacing.lg),
       children: [
-        _ApplicationSummary(application: application, documents: documents),
+        _ApplicationSummary(application: application, store: store),
         const SizedBox(height: AppSpacing.sm),
         _RelatedAgenda(
           agenda: upcomingAgenda ?? agendas.lastOrNull,
@@ -247,13 +242,10 @@ class _DetailHeader extends StatelessWidget {
 }
 
 class _ApplicationSummary extends StatelessWidget {
-  const _ApplicationSummary({
-    required this.application,
-    required this.documents,
-  });
+  const _ApplicationSummary({required this.application, required this.store});
 
   final Application application;
-  final List<AppDocument> documents;
+  final JobTrailStore store;
 
   @override
   Widget build(BuildContext context) {
@@ -308,12 +300,6 @@ class _ApplicationSummary extends StatelessWidget {
         ),
       ],
     );
-    final documentNames = documents.isEmpty
-        ? 'Belum dicatat'
-        : documents
-              .map((document) => '${document.title} · ${document.version}')
-              .join('\n');
-
     return _DetailCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -370,10 +356,41 @@ class _ApplicationSummary extends StatelessWidget {
                     value:
                         '${application.location} · ${application.workType.label}',
                   ),
-                  _Metadata(
+                  SizedBox(
                     width: fieldWidth,
-                    label: 'Dokumen dipakai',
-                    value: documentNames,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Dokumen dipakai',
+                          style: AppTypography.label.copyWith(
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        if (application.documentIds.isEmpty)
+                          Text(
+                            'Belum dicatat',
+                            style: AppTypography.body.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        for (final id in application.documentIds)
+                          if (store.documentById(id) case final document?)
+                            TextButton(
+                              key: ValueKey('detail-document-$id'),
+                              onPressed: () => showDocumentPreview(
+                                context,
+                                store: store,
+                                documentId: id,
+                              ),
+                              child: Text(
+                                '${document.title} · ${document.version}',
+                              ),
+                            )
+                          else
+                            const Text('Dokumen tidak tersedia'),
+                      ],
+                    ),
                   ),
                 ],
               );
