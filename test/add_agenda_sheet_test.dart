@@ -255,9 +255,20 @@ void main() {
     final store = await _open(tester);
     await tester.tap(_key('nav-board'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      _key('application-app-arunika'),
+      160,
+      scrollable: find
+          .descendant(of: _key('S02'), matching: find.byType(Scrollable))
+          .first,
+    );
+    await tester.ensureVisible(_key('application-app-arunika'));
+    await tester.pumpAndSettle();
     await tester.tap(_key('application-app-arunika'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Agenda Terkait'));
+    await tester.tap(_key('board-preview-detail'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agenda berikutnya'));
     await tester.pumpAndSettle();
     await _openSheet(tester);
     expect(
