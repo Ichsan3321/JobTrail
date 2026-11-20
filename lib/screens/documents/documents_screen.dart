@@ -138,7 +138,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   );
 
   Widget _buildSearchField() => SizedBox(
-    height: 44,
+    height: 48,
     child: TextField(
       key: const ValueKey('documents-search'),
       controller: _searchController,
@@ -147,7 +147,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       style: const TextStyle(fontSize: 12, color: AppColors.navy),
       decoration: InputDecoration(
         hintText: 'Cari CV, portofolio, versi...',
-        hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF90A1B9)),
+        hintStyle: const TextStyle(fontSize: 12, color: AppColors.gray),
         prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.gray),
         suffixIcon: _query.isEmpty
             ? null
@@ -610,10 +610,7 @@ class _DocumentCard extends StatelessWidget {
                 Text(
                   formatDocumentDate(document.updatedAt),
                   textAlign: TextAlign.end,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: Color(0xFF90A1B9),
-                  ),
+                  style: const TextStyle(fontSize: 10, color: AppColors.gray),
                 ),
               ],
             ),

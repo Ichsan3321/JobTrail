@@ -231,22 +231,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _filter(String text, bool selected, VoidCallback tap) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),
-    child: InkWell(
+    child: Semantics(
+      button: true,
+      selected: selected,
+      label: text,
       onTap: tap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 44),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primaryLight : AppColors.background,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: _label(
-          text,
-          12,
-          color: selected ? AppColors.primaryDark : AppColors.gray,
-          bold: selected,
+      child: InkWell(
+        excludeFromSemantics: true,
+        onTap: tap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.primaryLight : AppColors.background,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: _label(
+            text,
+            12,
+            color: selected ? AppColors.primaryDark : AppColors.gray,
+            bold: selected,
+          ),
         ),
       ),
     ),

@@ -246,7 +246,7 @@ class _AccessibleFilterChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.chip),
         onTap: onTap,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppRadius.chip),
@@ -616,7 +616,7 @@ class _AchievementMetrics extends StatelessWidget {
                 style: AppTypography.label.copyWith(
                   fontWeight: FontWeight.w400,
                   fontSize: 10,
-                  color: AppColors.peach,
+                  color: AppColors.gray,
                 ),
               ),
             ),

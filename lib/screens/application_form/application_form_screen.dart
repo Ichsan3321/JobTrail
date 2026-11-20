@@ -356,17 +356,22 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _fieldLabel(label, isRequired: isRequired, optional: optional),
-      TextFormField(
-        controller: controller,
-        style: const TextStyle(
-          color: _navy,
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
+      ExcludeSemantics(
+        child: _fieldLabel(label, isRequired: isRequired, optional: optional),
+      ),
+      Semantics(
+        label: isRequired ? '$label, wajib diisi' : label,
+        child: TextFormField(
+          controller: controller,
+          style: const TextStyle(
+            color: _navy,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+          textInputAction: TextInputAction.next,
+          validator: isRequired ? _required : null,
+          decoration: _inputDecoration(icon, hint),
         ),
-        textInputAction: TextInputAction.next,
-        validator: isRequired ? _required : null,
-        decoration: _inputDecoration(icon, hint),
       ),
     ],
   );
@@ -796,19 +801,22 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           titleSpacing: 20,
           title: Row(
             children: [
-              OutlinedButton(
-                onPressed: _saving ? null : _cancel,
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(44, 44),
-                  maximumSize: const Size(44, 44),
-                  padding: EdgeInsets.zero,
-                  side: const BorderSide(color: _border),
-                  backgroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+              Tooltip(
+                message: 'Kembali',
+                child: OutlinedButton(
+                  onPressed: _saving ? null : _cancel,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    maximumSize: const Size(48, 48),
+                    padding: EdgeInsets.zero,
+                    side: const BorderSide(color: _border),
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
+                  child: const Icon(Icons.arrow_back, color: _navy, size: 20),
                 ),
-                child: const Icon(Icons.arrow_back, color: _navy, size: 20),
               ),
               const SizedBox(width: 12),
               Expanded(
