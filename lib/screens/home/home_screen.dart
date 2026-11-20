@@ -467,11 +467,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final dist = store.distribution();
       final agendas =
           store.agendas
-              .where(
-                (a) =>
-                    !AppDates.wibDate(a.scheduledAt)
-                        .isBefore(store.referenceDate),
-              )
+              .where((a) => !a.scheduledAt.isBefore(store.referenceInstantUtc))
               .toList()
             ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
       final apps = store.applications.toList()

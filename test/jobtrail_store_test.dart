@@ -31,6 +31,15 @@ void main() {
   setUp(() => store = JobTrailStore.demo());
   tearDown(() => store.dispose());
 
+  test('reference instant uses injected clock and normalizes UTC', () {
+    final instant = DateTime.parse('2026-11-17T07:30:00+07:00');
+    final custom = JobTrailStore.demo(clock: () => instant);
+    addTearDown(custom.dispose);
+    expect(custom.referenceInstantUtc, DateTime.utc(2026, 11, 17, 0, 30));
+    expect(custom.referenceInstantUtc.isUtc, isTrue);
+    expect(store.referenceInstantUtc, DateTime.utc(2026, 11, 17, 2));
+  });
+
   test(
     'fixture has unique IDs, valid references and consistent latest status',
     () {

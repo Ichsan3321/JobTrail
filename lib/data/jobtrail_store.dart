@@ -55,6 +55,9 @@ class JobTrailStore extends ChangeNotifier {
 
   final DateTime referenceDate;
   final DateTime Function() _clock;
+
+  /// Current injected reference instant, normalized to UTC.
+  DateTime get referenceInstantUtc => _clock().toUtc();
   final Map<String, Application> _applications;
   final Map<String, Agenda> _agendas;
   final Map<String, AppDocument> _documents;
@@ -258,7 +261,7 @@ class JobTrailStore extends ChangeNotifier {
   }
 
   DateTime _historyTimestamp(DateTime appliedAt) {
-    final timestamp = _clock().toUtc();
+    final timestamp = referenceInstantUtc;
     if (AppDates.wibDate(timestamp).isBefore(appliedAt)) {
       throw ArgumentError('Clock mendahului tanggal lamaran.');
     }

@@ -357,6 +357,43 @@ void main() {
     );
   });
 
+  testWidgets('same-day elapsed and boundary agendas remain actionable', (
+    tester,
+  ) async {
+    final store = JobTrailStore.demo(
+      clock: () => DateTime.utc(2026, 11, 17, 2),
+    );
+    addTearDown(store.dispose);
+    for (final entry in [
+      (1, AgendaType.test),
+      (2, AgendaType.interview),
+      (3, AgendaType.test),
+    ]) {
+      store.saveAgenda(
+        Agenda(
+          id: 'boundary-${entry.$1}',
+          applicationId: 'app-nusa',
+          type: entry.$2,
+          scheduledAt: DateTime.utc(2026, 11, 17, entry.$1),
+          locationOrLink: 'Demo',
+        ),
+      );
+    }
+    await openSchedule(tester, store: store);
+    await reveal(tester, find.byKey(const ValueKey('agenda-boundary-1')));
+    expect(
+      find.byKey(const ValueKey('agenda-past-boundary-1')),
+      findsOneWidget,
+    );
+    await reveal(tester, find.byKey(const ValueKey('agenda-boundary-2')));
+    expect(find.byKey(const ValueKey('agenda-past-boundary-2')), findsNothing);
+    await reveal(tester, find.byKey(const ValueKey('agenda-boundary-3')));
+    expect(find.byKey(const ValueKey('agenda-past-boundary-3')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('agenda-boundary-3')));
+    await tester.pumpAndSettle();
+    expect(find.text('Nusa Digital'), findsOneWidget);
+  });
+
   testWidgets('past agenda in related view is still tappable to S03', (
     tester,
   ) async {

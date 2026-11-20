@@ -166,7 +166,7 @@ class _BoardScreenState extends State<BoardScreen> {
                 application: app,
                 agenda: _highlightAgenda(
                   widget.store.agendasFor(app.id),
-                  _referenceInstant(widget.store),
+                  widget.store.referenceInstantUtc,
                 ),
                 onTap: () => _openPreview(app.id),
               ),
@@ -177,13 +177,6 @@ class _BoardScreenState extends State<BoardScreen> {
     },
   );
 }
-
-/// Shared demo "now": 09:00 WIB (02:00Z) on [JobTrailStore.referenceDate],
-/// the anchor in docs/DUMMY_DATA.md and the store's default mutation clock.
-/// TODO(Hanif, Fachriza): replace with a store-level reference instant once
-/// the shared contract exposes one, so S01/S02/S05 compare the same value.
-DateTime _referenceInstant(JobTrailStore store) =>
-    store.referenceDate.add(const Duration(hours: 2));
 
 /// Whether [agenda] is at or after the reference instant (same day counts
 /// only when its time has not passed yet).

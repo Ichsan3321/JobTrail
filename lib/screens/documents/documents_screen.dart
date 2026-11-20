@@ -42,8 +42,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         document.notes,
       ].join(' ').toLowerCase();
       return matchesCategory && (query.isEmpty || searchable.contains(query));
-    }).toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return documents;
   }
 
@@ -149,11 +148,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       decoration: InputDecoration(
         hintText: 'Cari CV, portofolio, versi...',
         hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF90A1B9)),
-        prefixIcon: const Icon(
-          Icons.search,
-          size: 18,
-          color: AppColors.gray,
-        ),
+        prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.gray),
         suffixIcon: _query.isEmpty
             ? null
             : IconButton(
@@ -335,7 +330,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               category: value.category,
               fileName: value.fileName,
               version: value.version,
-              updatedAt: DateTime.now().toUtc(),
+              updatedAt: store.referenceInstantUtc,
               notes: value.notes,
             ),
           );
@@ -447,7 +442,10 @@ class _FilterChip extends StatelessWidget {
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 6,
+                ),
                 child: Text(
                   label,
                   style: TextStyle(
@@ -827,9 +825,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     super.initState();
     final document = widget.document;
     _titleController = TextEditingController(text: document?.title ?? '');
-    _fileNameController = TextEditingController(
-      text: document?.fileName ?? '',
-    );
+    _fileNameController = TextEditingController(text: document?.fileName ?? '');
     _versionController = TextEditingController(
       text: document?.version ?? '1.0',
     );
@@ -934,7 +930,9 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                   child: Text(
                     _saveError!,
                     key: const ValueKey('document-form-error'),
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -945,7 +943,9 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                   key: const ValueKey('document-form-save'),
                   onPressed: _save,
                   child: Text(
-                    widget.document == null ? 'Simpan Metadata' : 'Simpan Perubahan',
+                    widget.document == null
+                        ? 'Simpan Metadata'
+                        : 'Simpan Perubahan',
                   ),
                 ),
               ),
@@ -964,9 +964,8 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     ),
   );
 
-  String? _requiredValidator(String? value) => value == null || value.trim().isEmpty
-      ? 'Bagian ini wajib diisi.'
-      : null;
+  String? _requiredValidator(String? value) =>
+      value == null || value.trim().isEmpty ? 'Bagian ini wajib diisi.' : null;
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;

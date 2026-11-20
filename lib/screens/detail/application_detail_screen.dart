@@ -139,9 +139,7 @@ class ApplicationDetailScreen extends StatelessWidget {
     final agendas = store.agendasFor(applicationId);
     final upcomingAgenda = agendas
         .where(
-          (agenda) =>
-              !AppDates.wibDate(agenda.scheduledAt)
-                  .isBefore(store.referenceDate),
+          (agenda) => !agenda.scheduledAt.isBefore(store.referenceInstantUtc),
         )
         .firstOrNull;
     final documents = application.documentIds

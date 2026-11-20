@@ -25,7 +25,7 @@ class ScheduleAgendaCard extends StatelessWidget {
   final Application application;
   final VoidCallback onTap;
 
-  /// Agenda date (WIB) is before `store.referenceDate`: shown dimmed, not hidden.
+  /// Elapsed agendas are shown dimmed, not hidden.
   final bool isPast;
 
   /// Agenda types reuse the locked GSM status tokens (AGENTS.md §6).

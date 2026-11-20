@@ -527,7 +527,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       final horizon = ScheduleFormat.addDays(today, 7);
       final upcoming = scoped.where((a) {
         final date = _dateOf(a);
-        return !date.isBefore(today) && date.isBefore(horizon);
+        return !a.scheduledAt.isBefore(store.referenceInstantUtc) &&
+            date.isBefore(horizon);
       }).toList();
       final interviews = upcoming
           .where((a) => a.type == AgendaType.interview)
@@ -732,7 +733,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             agenda: agenda,
             application: store.applicationById(agenda.applicationId)!,
             onTap: () => widget.navigation.openDetail(agenda.applicationId),
-            isPast: entry.key.isBefore(today),
+            isPast: agenda.scheduledAt.isBefore(store.referenceInstantUtc),
           ),
           const SizedBox(height: 10),
         ],

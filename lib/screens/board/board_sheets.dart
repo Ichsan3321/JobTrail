@@ -386,7 +386,7 @@ class _PreviewSheetState extends State<_PreviewSheet> {
         for (final id in app.documentIds)
           if (widget.store.documentById(id) case final doc?) doc.title,
       ];
-      final now = _referenceInstant(widget.store);
+      final now = widget.store.referenceInstantUtc;
       final agenda = _highlightAgenda(widget.store.agendasFor(app.id), now);
       final upcoming = agenda != null && _isUpcoming(agenda, now);
       return _SheetFrame(

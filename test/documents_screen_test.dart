@@ -28,7 +28,11 @@ void main() {
     );
     // ListView lazily builds children. Scroll first so the footer enters
     // the widget tree before asserting that it is rendered.
-    for (var attempt = 0; attempt < 5 && footerNote.evaluate().isEmpty; attempt++) {
+    for (
+      var attempt = 0;
+      attempt < 5 && footerNote.evaluate().isEmpty;
+      attempt++
+    ) {
       await tester.drag(
         find.byKey(const ValueKey('S06')),
         const Offset(0, -400),
@@ -67,7 +71,8 @@ void main() {
   });
 
   testWidgets('add document metadata through the form', (tester) async {
-    final store = JobTrailStore.empty();
+    final instant = DateTime.utc(2026, 11, 17, 2);
+    final store = JobTrailStore.empty(clock: () => instant);
     addTearDown(store.dispose);
 
     await tester.pumpWidget(JobTrailApp(store: store));
@@ -85,6 +90,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(store.documents, hasLength(1));
+    expect(store.documents.single.updatedAt, instant);
     expect(store.documents.single.title, 'CV Product Designer');
     expect(store.documents.single.fileName, 'cv_product_designer.pdf');
     expect(store.documents.single.notes, 'Versi terbaru');
@@ -282,7 +288,8 @@ void main() {
       final mainScroll = find.descendant(
         of: find.byKey(const ValueKey('S06')),
         matching: find.byWidgetPredicate(
-          (widget) => widget is Scrollable &&
+          (widget) =>
+              widget is Scrollable &&
               widget.axisDirection == AxisDirection.down,
         ),
       );
@@ -342,6 +349,7 @@ void main() {
       expect(size.width, greaterThanOrEqualTo(44));
       expect(size.height, greaterThanOrEqualTo(48));
     }
+
     expectTarget(find.byKey(const ValueKey('documents-add')));
     for (final category in [
       'all',
