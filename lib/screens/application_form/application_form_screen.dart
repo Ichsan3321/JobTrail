@@ -320,16 +320,14 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     bool optional = false,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
-    child: Row(
+    child: Wrap(
       children: [
-        Flexible(
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: _navy,
-            ),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: _navy,
           ),
         ),
         if (isRequired)

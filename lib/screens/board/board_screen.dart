@@ -771,7 +771,7 @@ class _BoardApplicationCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            _AdaptiveCardRow(
               children: [
                 Container(
                   width: 40,
@@ -840,7 +840,7 @@ class _BoardApplicationCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             const Divider(height: 1, thickness: 1, color: AppColors.border),
             const SizedBox(height: AppSpacing.sm),
-            Row(
+            _AdaptiveCardRow(
               children: [
                 Expanded(
                   child: Text(
@@ -887,11 +887,33 @@ class _CardStatusChip extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 5),
-        Text(
-          status.label,
-          style: _jakarta(11, FontWeight.w700, status.foreground),
+        Flexible(
+          child: Text(
+            status.label,
+            style: _jakarta(11, FontWeight.w700, status.foreground),
+          ),
         ),
       ],
     ),
+  );
+}
+
+// Preserve compact cards at normal text sizes; stack constrained content.
+class _AdaptiveCardRow extends StatelessWidget {
+  const _AdaptiveCardRow({required this.children});
+  final List<Widget> children;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (MediaQuery.textScalerOf(context).scale(12) <= 16) {
+        return Row(children: children);
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final child in children) child is Expanded ? child.child : child,
+        ],
+      );
+    },
   );
 }
