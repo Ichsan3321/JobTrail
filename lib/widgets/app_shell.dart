@@ -14,17 +14,11 @@ class AppShell extends StatelessWidget {
   final JobTrailStore store;
   final AppNavigation navigation;
 
-  /// Tabs whose screen draws its own header, so the shell AppBar is hidden.
-  static const _ownHeaderTabs = {AppTab.home, AppTab.board};
-
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: navigation,
     builder: (context, _) => Scaffold(
-      // Home and Board render their own Figma headers (JT-BUG-001).
-      appBar: _ownHeaderTabs.contains(navigation.selectedTab)
-          ? null
-          : AppBar(title: const Text('JobTrail')),
+      // Each tab owns its title and actions; the shell owns navigation only.
       body: SafeArea(
         child: IndexedStack(
           index: navigation.selectedTab.index,

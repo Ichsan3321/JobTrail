@@ -193,15 +193,13 @@ void main() {
   });
 
   group('review regressions', () {
-    testWidgets('JT-BUG-001: Board has no shell AppBar, other tabs keep it', (
-      tester,
-    ) async {
+    testWidgets('JT-BUG-001: tab screens own their headers', (tester) async {
       await openBoard(tester);
       expect(find.byType(AppBar), findsNothing);
       expect(find.text('Board Lamaran'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('nav-schedule')));
       await tester.pumpAndSettle();
-      expect(find.byType(AppBar), findsOneWidget);
+      expect(find.byType(AppBar), findsNothing);
       await tester.tap(find.byKey(const ValueKey('nav-home')));
       await tester.pumpAndSettle();
       expect(find.byType(AppBar), findsNothing);

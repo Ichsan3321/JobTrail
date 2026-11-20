@@ -551,9 +551,14 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 18),
               Semantics(
                 button: true,
+                excludeSemantics: true,
                 key: const ValueKey('home-weekly-goal'),
                 label: 'Detail target mingguan',
-                child: GestureDetector(
+                value:
+                    '${store.weeklyAchieved} dari ${store.weeklyGoal.target} lamaran, $percent',
+                onTap: weeklyGoal,
+                child: InkWell(
+                  excludeFromSemantics: true,
                   onTap: weeklyGoal,
                   child: Container(
                     clipBehavior: Clip.antiAlias,

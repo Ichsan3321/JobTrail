@@ -37,6 +37,67 @@ Future<void> tapApplication(WidgetTester tester, String id) async {
 }
 
 void main() {
+  testWidgets(
+    'tab headers are owned by screens and Board state survives switching',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(const JobTrailApp());
+      for (final entry in {
+        'home': 'S01',
+        'board': 'S02',
+        'schedule': 'S05',
+        'documents': 'S06',
+        'statistics': 'S07',
+      }.entries) {
+        await selectTab(tester, entry.key);
+        expect(find.byKey(ValueKey(entry.value)), findsOneWidget);
+        expect(find.byType(AppBar), findsNothing);
+        expect(find.byType(BottomNavbar), findsOneWidget);
+        final nav = find.byKey(ValueKey('nav-${entry.key}'));
+        final semantics = tester.widget<Semantics>(
+          find.ancestor(of: nav, matching: find.byType(Semantics)).first,
+        );
+        expect(semantics.properties.button, isTrue);
+        expect(semantics.properties.selected, isTrue);
+      }
+      await selectTab(tester, 'board');
+      await tester.enterText(
+        find.byKey(const ValueKey('board-search')),
+        'Nusa',
+      );
+      await tester.pumpAndSettle();
+      await selectTab(tester, 'home');
+      await selectTab(tester, 'board');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('board-search')))
+            .controller!
+            .text,
+        'Nusa',
+      );
+      expect(
+        find.byKey(const ValueKey('application-app-lentera')),
+        findsNothing,
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('application-app-nusa')),
+        160,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('S02')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(
+        find.byKey(const ValueKey('application-app-nusa')),
+        findsOneWidget,
+      );
+    },
+  );
   testWidgets('primary action maintains a 48px touch target on desktop', (
     tester,
   ) async {
