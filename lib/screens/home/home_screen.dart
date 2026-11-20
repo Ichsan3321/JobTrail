@@ -231,22 +231,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _filter(String text, bool selected, VoidCallback tap) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),
-    child: InkWell(
+    child: Semantics(
+      button: true,
+      selected: selected,
+      label: text,
       onTap: tap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 44),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.primaryLight : AppColors.background,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: _label(
-          text,
-          12,
-          color: selected ? AppColors.primaryDark : AppColors.gray,
-          bold: selected,
+      child: InkWell(
+        excludeFromSemantics: true,
+        onTap: tap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.primaryLight : AppColors.background,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: _label(
+            text,
+            12,
+            color: selected ? AppColors.primaryDark : AppColors.gray,
+            bold: selected,
+          ),
         ),
       ),
     ),
@@ -467,11 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final dist = store.distribution();
       final agendas =
           store.agendas
-              .where(
-                (a) =>
-                    !AppDates.wibDate(a.scheduledAt)
-                        .isBefore(store.referenceDate),
-              )
+              .where((a) => !a.scheduledAt.isBefore(store.referenceInstantUtc))
               .toList()
             ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
       final apps = store.applications.toList()
@@ -555,9 +558,14 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 18),
               Semantics(
                 button: true,
+                excludeSemantics: true,
                 key: const ValueKey('home-weekly-goal'),
                 label: 'Detail target mingguan',
-                child: GestureDetector(
+                value:
+                    '${store.weeklyAchieved} dari ${store.weeklyGoal.target} lamaran, $percent',
+                onTap: weeklyGoal,
+                child: InkWell(
+                  excludeFromSemantics: true,
                   onTap: weeklyGoal,
                   child: Container(
                     clipBehavior: Clip.antiAlias,

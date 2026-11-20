@@ -13,13 +13,12 @@ class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.store, required this.navigation});
   final JobTrailStore store;
   final AppNavigation navigation;
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: navigation,
     builder: (context, _) => Scaffold(
-      appBar: navigation.selectedTab == AppTab.home
-          ? null
-          : AppBar(title: const Text('JobTrail')),
+      // Each tab owns its title and actions; the shell owns navigation only.
       body: SafeArea(
         child: IndexedStack(
           index: navigation.selectedTab.index,

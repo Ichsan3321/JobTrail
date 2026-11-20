@@ -1,9 +1,6 @@
-# Arsitektur fondasi JobTrail
+# Arsitektur integrasi frontend JobTrail
 
-17 November 2026 · PIC/integrator: Ichsan Ramadhan · branch kerja: `develop`.
-Task ID W12 belum tersedia: workbook master tidak ditemukan di workspace.
-Fondasi dibuat atas otorisasi koordinator. Kontrak ini perlu review PIC shared
-sebelum tim memulai implementasi screen final. `AGENTS.md` tetap otoritatif.
+Dokumen kontrak frontend terintegrasi Week 12; `AGENTS.md` tetap otoritatif. Implementasi saat ini memakai data demo in-memory dan tidak mencakup backend.
 
 ## Struktur dan batas tanggung jawab
 
@@ -42,7 +39,7 @@ dispose store yang diinjeksi. Store merupakan dependency tetap selama app terpas
 gunakan instance/key app baru bila mengganti store. Store milik app otomatis di-dispose.
 
 UI menggunakan `ListenableBuilder(listenable: store, builder: ...)` untuk perubahan data.
-Shell mendengarkan navigation. `IndexedStack` mempertahankan state lima tab.
+Shell mendengarkan navigation. `IndexedStack` mempertahankan state lima tab; setiap tab memiliki header sendiri dan shell hanya memiliki navbar.
 Tidak ada repository, selected tab, MaterialApp, atau navbar tambahan di screen.
 Screen tab menyediakan body; Detail/Form menyediakan Scaffold turunan tanpa navbar.
 Lebar preview maksimum 600 logical px; device yang lebih sempit memakai lebar tersedia.
@@ -76,7 +73,7 @@ menampilkan pesan Indonesia yang sesuai; jangan menelan error atau mengklaim suk
 |---|---|
 | `JobTrailStore.demo({clock})` | Fixture tunggal; mutasi default memakai clock anchor tetap |
 | `JobTrailStore.empty({referenceDate, clock})` | State kosong untuk QA; tidak membuat dataset tandingan |
-| `referenceDate`, `weeklyGoal` | Acuan demo dan target aktif |
+| `referenceDate`, `referenceInstantUtc`, `weeklyGoal` | Tanggal sipil demo, instant UTC dari clock terinjeksi dan target aktif |
 | `applications`, `agendas`, `documents`, `history` | Snapshot immutable, jangan diubah langsung |
 | `applicationById(id)`, `documentById(id)` | Lookup nullable; tangani ID hilang |
 | `nextAgendaId()`, `nextDocumentId()` | Alokasi ID unik satu sesi untuk metadata baru; pertahankan saat edit |
@@ -123,7 +120,7 @@ bukan dukungan URL deep link/browser refresh pada route detail.
 | `finishForm(savedId)` | Setelah CRUD sukses; pop hasil ID valid. Tidak menyimpan sendiri |
 | `back()` | Pop route; sebelum cancel form dirty, S04 wajib dialog konfirmasi |
 
-Contoh integrasi S04 nanti (bukan implementasi form final):
+Alur penyimpanan S04:
 
 ```dart
 final id = applicationId == null
@@ -157,11 +154,8 @@ Material icons pada shell adalah placeholder, bukan aset logo/icon Figma final.
 | EmptyState | message |
 | PlaceholderContent | screenId, title, owner, children; hapus pemakaiannya saat PIC mengimplementasikan UI final |
 
-## Batas fase ini
+## Integrasi dan batas fase ini
 
-Tidak ada auth/backend/persistence/upload/notifikasi nyata/deployment.
-Tidak ada form final, status picker, delete dialog, kalender, pencarian, grafik,
-notification overlay atau goal sheet. CRUD diuji melalui API store; placeholder
-S04 hanya menampilkan konteks tambah/edit dan tombol Batal. Save route diuji
-melalui API kontrak, bukan klaim alur form pengguna lengkap.
-Review bersama diperlukan sebelum membekukan kontrak dan membuka feature branches.
+Ketujuh screen sudah terintegrasi. Board membuka pratinjau sebelum Detail; Detail membuka Form, jadwal terkait, atau pratinjau metadata dokumen berdasarkan ID. Detail tanpa agenda menawarkan sheet agenda untuk status eligible. Jadwal terkait mereset filter tipe untuk konteks baru, sementara filter jadwal umum dipertahankan. Sheet dokumen digunakan bersama oleh Detail dan Dokumen dan membaca store secara reaktif.
+
+Clock demo terinjeksi menyediakan `referenceInstantUtc`; perbandingan agenda memakai instant UTC, sedangkan pengelompokan kalender memakai tanggal sipil WIB. Dokumen disimpan sebagai metadata saja. Tidak ada auth, backend, persistence, upload, push notification atau deployment. `saveAgenda` adalah upsert dan `deleteAgenda` tersedia pada store; jangan menyimpulkan bahwa seluruh operasi agenda memiliki kontrol UI. Status implementasi dan bukti QA ada di [QA](QA.md).

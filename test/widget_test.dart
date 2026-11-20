@@ -14,7 +14,90 @@ Future<void> selectTab(WidgetTester tester, String tab) async {
   await tester.pumpAndSettle();
 }
 
+/// Board cards follow Figma height; scroll S02 until the card is visible,
+/// then open its preview and tap Buka Detail.
+Future<void> tapApplication(WidgetTester tester, String id) async {
+  final target = find.byKey(ValueKey('application-$id'));
+  await tester.scrollUntilVisible(
+    target,
+    200,
+    scrollable: find
+        .descendant(
+          of: find.byKey(const ValueKey('S02')),
+          matching: find.byType(Scrollable),
+        )
+        .first,
+  );
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  await tester.tap(target);
+  await tester.pumpAndSettle();
+  // S02 card opens the preview sheet first; Buka Detail pushes S03.
+  await tester.tap(find.byKey(const ValueKey('board-preview-detail')));
+}
+
 void main() {
+  testWidgets(
+    'tab headers are owned by screens and Board state survives switching',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(const JobTrailApp());
+      for (final entry in {
+        'home': 'S01',
+        'board': 'S02',
+        'schedule': 'S05',
+        'documents': 'S06',
+        'statistics': 'S07',
+      }.entries) {
+        await selectTab(tester, entry.key);
+        expect(find.byKey(ValueKey(entry.value)), findsOneWidget);
+        expect(find.byType(AppBar), findsNothing);
+        expect(find.byType(BottomNavbar), findsOneWidget);
+        final nav = find.byKey(ValueKey('nav-${entry.key}'));
+        final semantics = tester.widget<Semantics>(
+          find.ancestor(of: nav, matching: find.byType(Semantics)).first,
+        );
+        expect(semantics.properties.button, isTrue);
+        expect(semantics.properties.selected, isTrue);
+      }
+      await selectTab(tester, 'board');
+      await tester.enterText(
+        find.byKey(const ValueKey('board-search')),
+        'Nusa',
+      );
+      await tester.pumpAndSettle();
+      await selectTab(tester, 'home');
+      await selectTab(tester, 'board');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('board-search')))
+            .controller!
+            .text,
+        'Nusa',
+      );
+      expect(
+        find.byKey(const ValueKey('application-app-lentera')),
+        findsNothing,
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('application-app-nusa')),
+        160,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('S02')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(
+        find.byKey(const ValueKey('application-app-nusa')),
+        findsOneWidget,
+      );
+    },
+  );
   testWidgets('primary action maintains a 48px touch target on desktop', (
     tester,
   ) async {
@@ -41,7 +124,7 @@ void main() {
         expect(find.byType(BottomNavbar), findsOneWidget);
       }
       await selectTab(tester, 'board');
-      await tester.tap(find.byKey(const ValueKey('application-app-nusa')));
+      await tapApplication(tester, 'app-nusa');
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('S03')), findsOneWidget);
       expect(find.text('Nusa Digital'), findsOneWidget);
@@ -49,7 +132,7 @@ void main() {
       await tester.pageBack();
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('S02')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('application-app-lentera')));
+      await tapApplication(tester, 'app-lentera');
       await tester.pumpAndSettle();
       expect(find.text('Lentera Tech'), findsOneWidget);
     },
@@ -66,7 +149,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('S01')), findsOneWidget);
       await selectTab(tester, 'board');
-      await tester.tap(find.byKey(const ValueKey('application-app-nusa')));
+      await tapApplication(tester, 'app-nusa');
       await tester.pumpAndSettle();
       await tester.tap(find.text('Edit Lamaran'));
       await tester.pumpAndSettle();
@@ -116,7 +199,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const JobTrailApp());
     await selectTab(tester, 'board');
-    await tester.tap(find.byKey(const ValueKey('application-app-nusa')));
+    await tapApplication(tester, 'app-nusa');
     await tester.pumpAndSettle();
     await tester.tap(find.text('Agenda Terkait'));
     await tester.pumpAndSettle();
