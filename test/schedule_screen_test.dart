@@ -40,6 +40,71 @@ Future<void> reveal(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets(
+    'related views reset stale type filters and preserve normal filter',
+    (tester) async {
+      await openSchedule(tester);
+      await tester.tap(find.byKey(const ValueKey('schedule-filter-interview')));
+      await tester.pumpAndSettle();
+
+      Future<void> openRelated(String id, String label) async {
+        await tester.tap(find.byKey(const ValueKey('nav-board')));
+        await tester.pumpAndSettle();
+        final card = find.byKey(ValueKey('application-$id'));
+        await tester.scrollUntilVisible(
+          card,
+          160,
+          scrollable: find
+              .descendant(
+                of: find.byKey(const ValueKey('S02')),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await tester.ensureVisible(card);
+        await tester.pumpAndSettle();
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('board-preview-detail')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label));
+        await tester.pumpAndSettle();
+      }
+
+      await openRelated('app-arunika', 'Agenda berikutnya');
+      expect(
+        find.byKey(const ValueKey('agenda-agenda-arunika')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('schedule-filter-test')));
+      await tester.pumpAndSettle();
+      await openRelated('app-nusa', 'Agenda Terkait');
+      expect(find.byKey(const ValueKey('agenda-agenda-nusa')), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('agenda-agenda-nusa')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('agenda-agenda-nusa')));
+      await tester.pumpAndSettle();
+      expect(find.text('Nusa Digital'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Agenda untuk Nusa Digital'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('nav-schedule')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('agenda-agenda-nusa'), skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('agenda-agenda-arunika'),
+          skipOffstage: false,
+        ),
+        findsNothing,
+      );
+    },
+  );
   testWidgets('today and week strip follow store.referenceDate (MIN start)', (
     tester,
   ) async {

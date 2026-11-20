@@ -37,7 +37,38 @@ class ScheduleScreen extends StatefulWidget {
 class _ScheduleScreenState extends State<ScheduleScreen> {
   int _weekOffset = 0;
   DateTime? _selectedDate;
-  AgendaType? _type;
+  AgendaType? _normalType;
+  AgendaType? _relatedType;
+
+  AgendaType? get _type => widget.navigation.scheduleApplicationId == null
+      ? _normalType
+      : _relatedType;
+  set _type(AgendaType? value) {
+    if (widget.navigation.scheduleApplicationId == null) {
+      _normalType = value;
+    } else {
+      _relatedType = value;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.navigation.addListener(_onNavigation);
+  }
+
+  void _onNavigation() {
+    if (widget.navigation.selectedTab == AppTab.schedule &&
+        widget.navigation.scheduleApplicationId != null) {
+      _relatedType = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.navigation.removeListener(_onNavigation);
+    super.dispose();
+  }
 
   JobTrailStore get store => widget.store;
 

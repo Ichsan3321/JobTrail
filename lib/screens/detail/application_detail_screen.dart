@@ -11,6 +11,7 @@ import '../../models/recruitment_status.dart';
 import '../../models/status_history.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/status_chip.dart';
+import '../schedule/add_agenda_sheet.dart';
 
 class ApplicationDetailScreen extends StatelessWidget {
   const ApplicationDetailScreen({
@@ -44,7 +45,7 @@ class ApplicationDetailScreen extends StatelessWidget {
                     ? const EmptyState(
                         message: 'Lamaran tidak ditemukan. Silakan kembali.',
                       )
-                    : _buildDetails(application),
+                    : _buildDetails(context, application),
               ),
             ],
           ),
@@ -135,7 +136,7 @@ class ApplicationDetailScreen extends StatelessWidget {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Widget _buildDetails(Application application) {
+  Widget _buildDetails(BuildContext context, Application application) {
     final agendas = store.agendasFor(applicationId);
     final upcomingAgenda = agendas
         .where(
@@ -156,6 +157,13 @@ class ApplicationDetailScreen extends StatelessWidget {
         _RelatedAgenda(
           agenda: upcomingAgenda ?? agendas.lastOrNull,
           upcoming: upcomingAgenda != null,
+          onAdd: agendaEligibleStatuses.contains(application.status)
+              ? () => showAddAgendaSheet(
+                  context,
+                  store: store,
+                  initialApplicationId: applicationId,
+                )
+              : null,
           onOpen: () =>
               navigation.showTab(AppTab.schedule, applicationId: applicationId),
         ),
@@ -446,11 +454,13 @@ class _RelatedAgenda extends StatelessWidget {
     required this.agenda,
     required this.upcoming,
     required this.onOpen,
+    this.onAdd,
   });
 
   final Agenda? agenda;
   final bool upcoming;
   final VoidCallback onOpen;
+  final VoidCallback? onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -483,6 +493,11 @@ class _RelatedAgenda extends StatelessWidget {
                       : 'Agenda Terkait',
                   style: AppTypography.label.copyWith(color: foreground),
                 ),
+                if (item == null && onAdd != null)
+                  TextButton(
+                    onPressed: onAdd,
+                    child: const Text('Tambah Agenda'),
+                  ),
                 Text(
                   item?.type.label ?? 'Belum ada agenda',
                   style: AppTypography.body.copyWith(

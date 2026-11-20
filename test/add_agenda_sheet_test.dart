@@ -251,6 +251,75 @@ void main() {
     expect(_key('add-agenda-sheet'), findsNothing);
   });
 
+  testWidgets('ineligible empty Detail does not offer agenda creation', (
+    tester,
+  ) async {
+    await _open(tester);
+    await tester.tap(_key('nav-home'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Lentera Tech'), 160);
+      await tester.ensureVisible(find.text('Lentera Tech'));
+      await tester.pumpAndSettle();
+    await tester.tap(find.text('Lentera Tech'));
+    await tester.pumpAndSettle();
+    expect(_key('S03'), findsOneWidget);
+    expect(find.text('Belum ada agenda'), findsOneWidget);
+    expect(find.text('Tambah Agenda'), findsNothing);
+  });
+
+  testWidgets('empty Detail adds a prefilled agenda and synchronizes screens', (
+    tester,
+  ) async {
+    final store = JobTrailStore.demo();
+    store.deleteAgenda(
+      'agenda-arunika',
+    ); // Fixture: eligible application without an agenda.
+    await _open(tester, store: store);
+    await tester.tap(_key('nav-board'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      _key('application-app-arunika'),
+      160,
+      scrollable: find
+          .descendant(of: _key('S02'), matching: find.byType(Scrollable))
+          .first,
+    );
+    await tester.ensureVisible(_key('application-app-arunika'));
+    await tester.pumpAndSettle();
+    await tester.tap(_key('application-app-arunika'));
+    await tester.pumpAndSettle();
+    await tester.tap(_key('board-preview-detail'));
+    await tester.pumpAndSettle();
+    final before = store.agendas.length;
+    await tester.tap(find.text('Tambah Agenda'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Arunika Finance — Business Analyst Intern'),
+      findsOneWidget,
+    );
+    await _tapInSheet(tester, 'agenda-cancel');
+    expect(store.agendas.length, before);
+    expect(_key('S03'), findsOneWidget);
+    await tester.tap(find.text('Tambah Agenda'));
+    await tester.pumpAndSettle();
+    await _pickDay(tester, 20);
+    await _tapInSheet(tester, 'agenda-type-test');
+    await _pickTime(tester, '08', '30');
+    await tester.enterText(_key('agenda-location'), 'Zoom QA');
+    await _tapInSheet(tester, 'agenda-save');
+    expect(_key('S03'), findsOneWidget);
+    expect(store.agendasFor('app-arunika').single.locationOrLink, 'Zoom QA');
+    expect(find.textContaining('Zoom QA'), findsOneWidget);
+    await tester.tap(find.text('Agenda berikutnya'));
+    await tester.pumpAndSettle();
+    expect(find.text('Agenda untuk Arunika Finance'), findsOneWidget);
+    expect(find.textContaining('Zoom QA'), findsOneWidget);
+    await tester.tap(_key('nav-home'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.textContaining('Zoom QA'), 160);
+    expect(find.textContaining('Zoom QA'), findsOneWidget);
+  });
+
   testWidgets('Agenda Terkait prefills its application', (tester) async {
     final store = await _open(tester);
     await tester.tap(_key('nav-board'));
