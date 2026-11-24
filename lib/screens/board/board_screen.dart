@@ -14,9 +14,15 @@ part 'board_sheets.dart';
 /// S02 Application Board (Figma node 173:1792, PIC Hanif).
 /// Reads the shared store only; filter/search/sort are view state, not data.
 class BoardScreen extends StatefulWidget {
-  const BoardScreen({super.key, required this.store, required this.navigation});
+  const BoardScreen({
+    super.key,
+    required this.store,
+    required this.navigation,
+    this.savedApplicationId,
+  });
   final JobTrailStore store;
   final AppNavigation navigation;
+  final String? savedApplicationId;
 
   @override
   State<BoardScreen> createState() => _BoardScreenState();
@@ -39,6 +45,19 @@ class _BoardScreenState extends State<BoardScreen> {
   Set<String> _sources = const {};
 
   @override
+  void didUpdateWidget(covariant BoardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final savedId = widget.savedApplicationId;
+    if (savedId == null || savedId == oldWidget.savedApplicationId) return;
+    final saved = widget.store.applicationById(savedId);
+    if (saved == null) return;
+
+    if (!_matchesSearch(saved, _query.toLowerCase())) _searchController.clear();
+    if (!_matchesStatus(saved)) _statusFilter = null;
+    if (!_matchesSource(saved)) _sources = {..._sources, saved.source};
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -46,15 +65,27 @@ class _BoardScreenState extends State<BoardScreen> {
 
   String get _query => _searchController.text.trim();
 
+  bool _matchesSearch(Application app, String query) =>
+      query.isEmpty ||
+      app.company.toLowerCase().contains(query) ||
+      app.position.toLowerCase().contains(query);
+
+  bool _matchesStatus(Application app) =>
+      _statusFilter == null || app.status == _statusFilter;
+
+  bool _matchesSource(Application app) =>
+      _sources.isEmpty || _sources.contains(app.source);
+
   List<Application> _visible(List<Application> all) {
     final query = _query.toLowerCase();
-    final items = all.where((app) {
-      if (_statusFilter != null && app.status != _statusFilter) return false;
-      if (_sources.isNotEmpty && !_sources.contains(app.source)) return false;
-      if (query.isEmpty) return true;
-      return app.company.toLowerCase().contains(query) ||
-          app.position.toLowerCase().contains(query);
-    }).toList();
+    final items = all
+        .where(
+          (app) =>
+              _matchesStatus(app) &&
+              _matchesSource(app) &&
+              _matchesSearch(app, query),
+        )
+        .toList();
     int byCompany(Application a, Application b) =>
         a.company.toLowerCase().compareTo(b.company.toLowerCase());
     items.sort((a, b) {
