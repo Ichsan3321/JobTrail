@@ -133,15 +133,23 @@ class _AuthGateState extends State<AuthGate> {
 }
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.provider, required this.onEnter});
+  const AuthScreen({
+    super.key,
+    required this.provider,
+    required this.onEnter,
+    this.cancelRecovery,
+  });
   final AuthProvider provider;
   final VoidCallback onEnter;
+  final VoidCallback? cancelRecovery;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  AuthPage _page = AuthPage.login;
+  late AuthPage _page = widget.cancelRecovery == null
+      ? AuthPage.login
+      : AuthPage.reset;
   GlobalKey<FormState> _form = GlobalKey<FormState>();
   final _name = TextEditingController(),
       _email = TextEditingController(),
@@ -150,6 +158,20 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _visible = false, _confirmVisible = false, _busy = false;
   String? _error;
   bool _preview = false;
+  bool get _live => widget.provider is SessionAuthProvider;
+
+  Future<T> _request<T>(Future<T> request) =>
+      _live ? request : request.timeout(const Duration(seconds: 10));
+
+  void _returnToLogin() {
+    final cancel = widget.cancelRecovery;
+    if (cancel == null) {
+      _go(AuthPage.login);
+    } else {
+      cancel();
+    }
+  }
+
   @override
   void dispose() {
     for (final c in [_name, _email, _password, _confirm]) {
@@ -184,47 +206,50 @@ class _AuthScreenState extends State<AuthScreen> {
       if (_preview) throw const AuthUnavailable();
       switch (page) {
         case AuthPage.login:
-          await widget.provider
-              .signIn(_email.text.trim(), _password.text)
-              .timeout(const Duration(seconds: 10));
-          if (!mounted) return;
+          await _request(
+            widget.provider.signIn(_email.text.trim(), _password.text),
+          );
+          if (!mounted || _live) return;
           final session = await widget.provider.restoreSession().timeout(
             const Duration(seconds: 10),
           );
           if (!session) throw const AuthUnavailable();
           if (mounted) widget.onEnter();
         case AuthPage.register:
-          await widget.provider
-              .register(_name.text.trim(), _email.text.trim(), _password.text)
-              .timeout(const Duration(seconds: 10));
+          await _request(
+            widget.provider.register(
+              _name.text.trim(),
+              _email.text.trim(),
+              _password.text,
+            ),
+          );
           if (mounted) _go(AuthPage.verify);
         case AuthPage.forgot:
-          await widget.provider
-              .sendReset(_email.text.trim())
-              .timeout(const Duration(seconds: 10));
+          await _request(widget.provider.sendReset(_email.text.trim()));
           if (mounted) _go(AuthPage.sent);
         case AuthPage.verify:
           if (_preview) throw const AuthUnavailable();
-          await widget.provider
-              .resendVerification(_email.text.trim())
-              .timeout(const Duration(seconds: 10));
+          await _request(
+            widget.provider.resendVerification(_email.text.trim()),
+          );
         case AuthPage.sent:
           if (_preview) throw const AuthUnavailable();
-          await widget.provider
-              .sendReset(_email.text.trim())
-              .timeout(const Duration(seconds: 10));
+          await _request(widget.provider.sendReset(_email.text.trim()));
         case AuthPage.reset:
-          await widget.provider
-              .setPassword(_password.text)
-              .timeout(const Duration(seconds: 10));
-          if (mounted) _go(AuthPage.login);
+          await _request(widget.provider.setPassword(_password.text));
+          if (mounted && !_live) _go(AuthPage.login);
       }
     } catch (error) {
       if (mounted) {
+        if (page == AuthPage.login && error == AuthIssue.emailUnconfirmed) {
+          _go(AuthPage.verify);
+        }
         setState(
-          () => _error = error is AuthUnavailable
-              ? error.toString()
-              : 'Permintaan gagal. Silakan coba lagi.',
+          () => _error = switch (error) {
+            AuthUnavailable() => error.toString(),
+            AuthIssue issue => issue.message,
+            _ => 'Permintaan gagal. Silakan coba lagi.',
+          },
         );
       }
     } finally {
@@ -390,7 +415,7 @@ class _AuthScreenState extends State<AuthScreen> {
     return PopScope(
       canPop: _page == AuthPage.login,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && !_busy) _go(AuthPage.login);
+        if (!didPop && !_busy) _returnToLogin();
       },
       child: Scaffold(
         body: SafeArea(
@@ -548,13 +573,14 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     ] else
                       TextButton(
-                        onPressed: _busy ? null : () => _go(AuthPage.login),
+                        onPressed: _busy ? null : _returnToLogin,
                         child: const Text('Kembali ke Login'),
                       ),
-                    _notice(
-                      'UI autentikasi belum terhubung ke penyedia akun. Tidak ada login, pendaftaran, atau email nyata.',
-                    ),
-                    if (kDebugMode && !_busy) ...[
+                    if (!_live)
+                      _notice(
+                        'UI autentikasi belum terhubung ke penyedia akun. Tidak ada login, pendaftaran, atau email nyata.',
+                      ),
+                    if (kDebugMode && !_busy && !_live) ...[
                       if (_page == AuthPage.login)
                         TextButton(
                           key: const ValueKey('auth-demo-entry'),

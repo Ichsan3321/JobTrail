@@ -2,8 +2,8 @@
 
 Baseline Flutter di `30db71d`. Migrasi ini menetapkan kontrak PostgreSQL untuk
 fase metadata. Supabase Auth mengelola identitas email/password dan menyediakan
-`auth.users.id`. Implementasi sesi Flutter, penyedia Auth, dan repository remote
-adalah tugas integrasi berikutnya.
+`auth.users.id`. Integrasi sesi Flutter dijelaskan di [AUTH_UI.md](AUTH_UI.md).
+Repository remote dan pemetaan snapshot/RPC masih menjadi tugas integrasi berikutnya.
 
 ## Skema dan relasi
 
@@ -243,4 +243,5 @@ pada project pengembangan JobTrail dengan hasil berikut.
 | Cleanup | Seluruh fixture yang dilacak berhasil dibersihkan. |
 
 **Rekomendasi PR #14 · GO untuk merge.** Validasi backend hosted telah lulus.
-Integrasi autentikasi dan repository di Flutter masih tertunda.
+Validasi manual Auth Flutter dan integrasi repository masih tertunda. Lihat
+[langkah uji Auth Flutter](AUTH_UI.md#manual-chrome-and-android-validation).
