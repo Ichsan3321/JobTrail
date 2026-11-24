@@ -1,17 +1,20 @@
 # JobTrail
 
-Job & Internship Application Tracker untuk mahasiswa dan fresh graduate. Flutter/Dart; target pengembangan Android dan Web. Status: **kandidat integrasi frontend Week 12 untuk review**, bukan aplikasi production yang terhubung backend.
+Job & Internship Application Tracker untuk mahasiswa dan fresh graduate. Flutter/Dart; target pengembangan Android dan Web.
 
-Tujuh screen terintegrasi: S01 Home, S02 Board, S03 Detail, S04 Tambah/Edit Lamaran, S05 Jadwal, S06 Dokumen, dan S07 Statistik. Data sintetis disimpan dalam satu `JobTrailStore` in-memory dan hilang saat aplikasi dimulai ulang. Tidak ada autentikasi, persistence, backend/Supabase, unggah file nyata, push notification, atau deployment production dalam fase ini.
+Tujuh screen terintegrasi tersedia di mode demo dengan `JobTrailStore` in-memory.
+Mode Supabase menggunakan autentikasi email/password dan menampilkan status
+integrasi sambil menunggu repository persisten.
 
 ## Menjalankan
 
 ```powershell
 flutter pub get
-flutter run -d chrome
+flutter run -d chrome --web-hostname=localhost --web-port=3000 --dart-define=JOBTRAIL_AUTH_MODE=mock
 ```
 
-Alternatif: `flutter run -d web-server --web-hostname=127.0.0.1 --web-port=8080`, lalu buka `http://localhost:8080`. Untuk perangkat yang tersedia, gunakan `flutter devices` dan `flutter run -d <device-id>`. Gunakan SDK dan lockfile proyek tanpa upgrade dependency yang tidak disetujui.
+Untuk menjalankan autentikasi Supabase pada Chrome atau Android, ikuti
+[konfigurasi dan pengujian Auth](docs/AUTH_UI.md#run-locally).
 
 ## Interaksi dan data
 
