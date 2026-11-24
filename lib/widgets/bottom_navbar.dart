@@ -21,9 +21,11 @@ class BottomNavbar extends StatelessWidget {
   ];
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: const BoxDecoration(
-      color: AppColors.white,
-      border: Border(top: BorderSide(color: AppColors.border)),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      border: Border(
+        top: BorderSide(color: Theme.of(context).colorScheme.outline),
+      ),
     ),
     child: SafeArea(
       top: false,

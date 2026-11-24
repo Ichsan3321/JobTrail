@@ -59,4 +59,10 @@ abstract final class AppTypography {
     fontWeight: FontWeight.w600,
     color: AppColors.gray,
   );
+  static const caption = TextStyle(
+    fontFamily: bodyFamily,
+    fontSize: 12,
+    fontWeight: FontWeight.w400,
+    color: AppColors.gray,
+  );
 }

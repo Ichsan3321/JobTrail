@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_dates.dart';
+import '../../core/constants/app_tokens.dart';
 import '../../core/routes/app_navigation.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/application.dart';
@@ -739,7 +740,9 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                  textStyle: AppTypography.body.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 child: const Text('Batal'),
               ),
