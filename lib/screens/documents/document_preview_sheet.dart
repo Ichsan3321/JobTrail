@@ -13,7 +13,6 @@ Future<void> showDocumentPreview(
   context: context,
   isScrollControlled: true,
   useSafeArea: true,
-  backgroundColor: AppColors.white,
   shape: const RoundedRectangleBorder(
     borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
   ),
@@ -126,7 +125,7 @@ class _DocumentPreviewSheet extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 3),
                 child: Text(
                   '• ${application.company} — ${application.position}',
-                  style: const TextStyle(fontSize: 12, color: AppColors.gray),
+                  style: AppTypography.caption,
                 ),
               ),
           ],
@@ -161,10 +160,7 @@ class _MetadataRow extends StatelessWidget {
     padding: const EdgeInsets.symmetric(vertical: 7),
     child: LayoutBuilder(
       builder: (context, constraints) {
-        final labelText = Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: AppColors.gray),
-        );
+        final labelText = Text(label, style: AppTypography.caption);
         final valueText = Text(
           value,
           style: const TextStyle(

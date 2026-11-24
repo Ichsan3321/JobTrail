@@ -8,7 +8,6 @@ abstract final class AppTheme {
       useMaterial3: true,
       visualDensity: VisualDensity.standard,
       fontFamily: AppTypography.bodyFamily,
-      scaffoldBackgroundColor: AppColors.background,
       colorScheme: const ColorScheme.light(
         primary: AppColors.primary,
         onPrimary: AppColors.white,
@@ -32,29 +31,42 @@ abstract final class AppTheme {
         outline: AppColors.border,
       ),
     );
+    final colors = base.colorScheme;
+    final text = base.textTheme;
     return base.copyWith(
-      textTheme: base.textTheme.copyWith(
+      scaffoldBackgroundColor: colors.surfaceContainer,
+      textTheme: text.copyWith(
+        displayLarge: text.displayLarge?.copyWith(
+          fontFamily: AppTypography.headingFamily,
+        ),
+        displayMedium: text.displayMedium?.copyWith(
+          fontFamily: AppTypography.headingFamily,
+        ),
+        displaySmall: text.displaySmall?.copyWith(
+          fontFamily: AppTypography.headingFamily,
+        ),
         headlineLarge: AppTypography.heading.copyWith(fontSize: 32),
         headlineMedium: AppTypography.heading,
         headlineSmall: AppTypography.section,
         titleLarge: AppTypography.section,
         bodyLarge: AppTypography.body.copyWith(fontSize: 16),
         bodyMedium: AppTypography.body,
-        bodySmall: AppTypography.label.copyWith(fontWeight: FontWeight.w400),
+        bodySmall: AppTypography.caption,
       ),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.navy,
+      appBarTheme: AppBarTheme(
+        backgroundColor: colors.surfaceContainer,
+        foregroundColor: colors.onSurface,
         titleTextStyle: AppTypography.section,
         scrolledUnderElevation: 0,
       ),
       cardTheme: CardThemeData(
-        color: AppColors.white,
+        color: colors.surfaceContainerLowest,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.card),
-          side: const BorderSide(color: AppColors.border),
+          side: BorderSide(color: colors.outline),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -67,19 +79,22 @@ abstract final class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.white,
+        fillColor: colors.surface,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.button),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.button),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: colors.outline),
         ),
       ),
-      navigationBarTheme: const NavigationBarThemeData(
-        backgroundColor: AppColors.white,
-        indicatorColor: AppColors.primaryLight,
-        labelTextStyle: WidgetStatePropertyAll(AppTypography.label),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: colors.surface,
+        indicatorColor: colors.primaryContainer,
+        labelTextStyle: const WidgetStatePropertyAll(AppTypography.label),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        modalBackgroundColor: colors.surface,
       ),
     );
   }
