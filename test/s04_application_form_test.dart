@@ -2,7 +2,9 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jobtrail/core/constants/app_tokens.dart';
 import 'package:jobtrail/core/routes/app_navigation.dart';
+import 'package:jobtrail/core/theme/app_theme.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
 import 'package:jobtrail/models/application.dart';
 import 'package:jobtrail/models/recruitment_status.dart';
@@ -48,6 +50,7 @@ Future<AppNavigation> _mount(
   final navigation = AppNavigation(store);
   await tester.pumpWidget(
     MaterialApp(
+      theme: AppTheme.light,
       navigatorKey: navigation.navigatorKey,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context)
@@ -110,7 +113,116 @@ Future<void> _fillRequired(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+double _textContrast(Color foreground, Color background) =>
+    (background.computeLuminance() + .05) /
+    (foreground.computeLuminance() + .05);
+
 void main() {
+  test('light Material 3 roles match the JobTrail palette', () {
+    final theme = AppTheme.light;
+    final colors = theme.colorScheme;
+    expect(theme.useMaterial3, isTrue);
+    expect(colors.primary, const Color(0xFF5B5BF0));
+    expect(colors.onPrimary, AppColors.white);
+    expect(colors.primaryContainer, AppColors.primaryLight);
+    expect(colors.onPrimaryContainer, AppColors.primaryDark);
+    expect(colors.secondary, AppColors.mint);
+    expect(colors.onSecondary, AppColors.navy);
+    expect(colors.tertiary, AppColors.peach);
+    expect(colors.onTertiary, AppColors.navy);
+    expect(colors.error, AppColors.error);
+    expect(colors.onError, AppColors.white);
+    expect(colors.errorContainer, AppColors.errorTint);
+    expect(colors.onErrorContainer, AppColors.error);
+    expect(colors.surface, AppColors.white);
+    expect(colors.onSurface, AppColors.navy);
+    expect(
+      [
+        colors.surfaceContainerLowest,
+        colors.surfaceContainerLow,
+        colors.surfaceContainer,
+        colors.surfaceContainerHigh,
+        colors.surfaceContainerHighest,
+      ],
+      [
+        AppColors.white,
+        AppColors.surfaceLow,
+        AppColors.background,
+        AppColors.surfaceHigh,
+        AppColors.border,
+      ],
+    );
+    expect(
+      _textContrast(colors.error, colors.onError),
+      greaterThanOrEqualTo(4.5),
+    );
+    expect(
+      _textContrast(colors.onErrorContainer, colors.errorContainer),
+      greaterThanOrEqualTo(4.5),
+    );
+  });
+
+  for (final textScale in [1.0, 2.0]) {
+    testWidgets(
+      'rendered form errors meet AA at 393x852 and ${textScale}x text',
+      (tester) async {
+        final store = _emptyStore();
+        await _mount(tester, store, textScale: textScale);
+        await _openAdd(tester);
+        await tester.tap(find.text('Simpan Lamaran'));
+        await tester.pumpAndSettle();
+
+        final colors = Theme.of(
+          tester.element(find.byKey(const ValueKey('S04'))),
+        ).colorScheme;
+        final sourceError = find.text('Pilih sumber lowongan.');
+        for (final error in [find.text('Wajib diisi.').first, sourceError]) {
+          await tester.ensureVisible(error);
+          await tester.pumpAndSettle();
+          expect(error.hitTestable(), findsOneWidget);
+          final text = tester.widget<RichText>(
+            find.descendant(of: error, matching: find.byType(RichText)),
+          );
+          final foreground = text.text.style!.color!;
+          final surfaces = tester
+              .widgetList<DecoratedBox>(
+                find.ancestor(of: error, matching: find.byType(DecoratedBox)),
+              )
+              .map((box) => box.decoration)
+              .whereType<BoxDecoration>();
+          final background = surfaces
+              .lastWhere((box) => box.color != null)
+              .color!;
+          expect(background, colors.surfaceContainerLowest);
+          expect(foreground, colors.error);
+          expect(
+            _textContrast(foreground, background),
+            greaterThanOrEqualTo(4.5),
+          );
+        }
+
+        final input = tester.widget<InputDecorator>(
+          find.byType(InputDecorator).first,
+        );
+        expect(input.decoration.fillColor, colors.surfaceContainer);
+        expect(input.decoration.errorBorder!.borderSide.color, colors.error);
+        expect(
+          input.decoration.focusedErrorBorder!.borderSide.color,
+          colors.error,
+        );
+        expect(store.applications, isEmpty);
+
+        final source = find.widgetWithText(ChoiceChip, 'LinkedIn');
+        await tester.ensureVisible(source);
+        await tester.tap(source);
+        await tester.pumpAndSettle();
+        expect(sourceError, findsNothing);
+        expect(find.text('Wajib diisi.'), findsWidgets);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('JT-BUG-016: add updates shared store and Home observer', (
     tester,
   ) async {
@@ -193,6 +305,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(store.applications, isEmpty);
+    final colors = AppTheme.light.colorScheme;
+    final feedback = tester.widget<SnackBar>(find.byType(SnackBar));
+    expect(feedback.backgroundColor, colors.errorContainer);
+    expect((feedback.content as Text).style!.color, colors.onErrorContainer);
     expect(find.byKey(const ValueKey('S04')), findsOneWidget);
     expect(
       find.byType(TextFormField).first.evaluate().single.widget,
