@@ -24,7 +24,11 @@ class AppShell extends StatelessWidget {
           index: navigation.selectedTab.index,
           children: [
             HomeScreen(store: store, navigation: navigation),
-            BoardScreen(store: store, navigation: navigation),
+            BoardScreen(
+              store: store,
+              navigation: navigation,
+              savedApplicationId: navigation.savedBoardApplicationId,
+            ),
             ScheduleScreen(store: store, navigation: navigation),
             DocumentsScreen(store: store),
             StatisticsScreen(store: store),

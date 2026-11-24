@@ -13,12 +13,16 @@ class AppNavigation extends ChangeNotifier {
   final navigatorKey = GlobalKey<NavigatorState>();
   AppTab _selectedTab = AppTab.home;
   String? _scheduleApplicationId;
+  String? _savedBoardApplicationId;
   AppTab get selectedTab => _selectedTab;
   String? get scheduleApplicationId => _scheduleApplicationId;
+  String? get savedBoardApplicationId => _savedBoardApplicationId;
 
+  /// The optional ID scopes Schedule or reveals an application saved by Add.
   void showTab(AppTab tab, {String? applicationId}) {
     _selectedTab = tab;
     _scheduleApplicationId = tab == AppTab.schedule ? applicationId : null;
+    _savedBoardApplicationId = tab == AppTab.board ? applicationId : null;
     navigatorKey.currentState?.popUntil((route) => route.isFirst);
     notifyListeners();
   }
@@ -47,7 +51,7 @@ class AppNavigation extends ChangeNotifier {
       ),
     );
     if (savedId != null && store.applicationById(savedId) != null) {
-      showTab(AppTab.board);
+      showTab(AppTab.board, applicationId: savedId);
     }
   }
 
