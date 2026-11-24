@@ -1,5 +1,7 @@
 # Arsitektur integrasi frontend JobTrail
 
+Kontrak database dan handoff repository tersedia di [BACKEND_CONTRACT.md](BACKEND_CONTRACT.md).
+
 Dokumen kontrak frontend terintegrasi Week 12; `AGENTS.md` tetap otoritatif. Implementasi saat ini memakai data demo in-memory dan tidak mencakup backend.
 
 ## Struktur dan batas tanggung jawab
