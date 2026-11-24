@@ -8,9 +8,13 @@ abstract final class AppColors {
   static const mintDark = Color(0xFF10A982);
   static const peach = Color(0xFFFFB37A);
   static const peachTint = Color(0xFFFFF4EC);
+  static const error = Color(0xFFB91C1C);
+  static const errorTint = Color(0xFFFFF1F2);
   static const navy = Color(0xFF1E2A4A);
   static const gray = Color(0xFF5A6380);
   static const background = Color(0xFFF7F7FC);
+  static const surfaceLow = Color(0xFFFAFAFF);
+  static const surfaceHigh = Color(0xFFEEEEF6);
   static const border = Color(0xFFE4E4F0);
   static const white = Color(0xFFFFFFFF);
 }

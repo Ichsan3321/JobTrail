@@ -39,6 +39,8 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   static const _background = Color(0xFFF7F7FC);
   static const _border = Color(0xFFE4E4F0);
 
+  ColorScheme get _colors => Theme.of(context).colorScheme;
+
   static const _months = <String>[
     'Jan',
     'Feb',
@@ -280,8 +282,16 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    final colors = _colors;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: colors.errorContainer,
+        content: Text(
+          message,
+          style: TextStyle(color: colors.onErrorContainer),
+        ),
+      ),
+    );
   }
 
   InputDecoration _inputDecoration(IconData icon, String hint) =>
@@ -291,7 +301,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         prefixIcon: Icon(icon, size: 18, color: _gray),
         prefixIconConstraints: const BoxConstraints(minWidth: 43),
         filled: true,
-        fillColor: _background,
+        fillColor: _colors.surfaceContainer,
         contentPadding: const EdgeInsets.symmetric(
           vertical: 13,
           horizontal: 14,
@@ -305,11 +315,11 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           borderRadius: BorderRadius.circular(14),
         ),
         errorBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: Colors.red),
+          borderSide: BorderSide(color: _colors.error),
           borderRadius: BorderRadius.circular(14),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: Colors.red, width: 1.5),
+          borderSide: BorderSide(color: _colors.error, width: 1.5),
           borderRadius: BorderRadius.circular(14),
         ),
       );
@@ -331,10 +341,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           ),
         ),
         if (isRequired)
-          const Text(
-            ' *',
-            style: TextStyle(fontSize: 12, color: Color(0xFFB91C1C)),
-          ),
+          Text(' *', style: TextStyle(fontSize: 12, color: _colors.error)),
         if (optional)
           const Text(
             ' (Opsional)',
@@ -382,7 +389,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }) => Container(
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: _colors.surfaceContainerLowest,
       border: Border.all(color: _border),
       borderRadius: BorderRadius.circular(20),
     ),
@@ -395,10 +402,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: _primaryLight,
+                color: _colors.primaryContainer,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, size: 17, color: _primaryDark),
+              child: Icon(icon, size: 17, color: _colors.onPrimaryContainer),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -481,11 +488,11 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         ],
       ),
       if (_sourceInvalid)
-        const Padding(
-          padding: EdgeInsets.only(top: 6),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
           child: Text(
             'Pilih sumber lowongan.',
-            style: TextStyle(fontSize: 12, color: Colors.red),
+            style: TextStyle(fontSize: 12, color: _colors.error),
           ),
         ),
       const SizedBox(height: 14),
@@ -854,22 +861,22 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.only(left: 4, bottom: 12),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 12),
                       child: Text.rich(
                         TextSpan(
                           children: [
                             TextSpan(
                               text: '*',
-                              style: TextStyle(color: Color(0xFFB91C1C)),
+                              style: TextStyle(color: _colors.error),
                             ),
-                            TextSpan(
+                            const TextSpan(
                               text: ' wajib diisi',
                               style: TextStyle(color: _gray),
                             ),
                           ],
                         ),
-                        style: TextStyle(fontSize: 11),
+                        style: const TextStyle(fontSize: 11),
                       ),
                     ),
                     _informationCard(),
