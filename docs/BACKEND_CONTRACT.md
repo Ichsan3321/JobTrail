@@ -169,11 +169,78 @@ Untuk edit yang mengalami timeout, baca ulang sebelum mencoba dengan revisi baru
 
 ## Pengujian lokal
 
+Gunakan Supabase CLI 3.3.0 dan runtime lokal yang telah disiapkan tim. Jalankan
+`supabase start` dari root untuk stack lokal baru. Bila perlu menjalankan migrasi
+tertunda pada stack lokal yang sudah ada, gunakan `supabase db push` tanpa
+`--remote`. Konfigurasi lokal mengekspos `public`, menonaktifkan seed, dan memakai
+redirect localhost. Jangan gunakan `supabase config push` untuk menerapkan
+konfigurasi pengembangan ini ke project bersama. Biarkan `.temp/`,
+`.branches/`, dan file environment tetap lokal. File contoh hanya boleh berisi
+placeholder.
+
 Jalankan hanya pada database lokal disposable. Pada Supabase lokal yang memiliki
 skema Auth, terapkan migrasi berurutan lalu jalankan
 `psql -X -h 127.0.0.1 -p PORT_LOKAL -v ON_ERROR_STOP=1 -f supabase/tests/database_contract.sql`
 dengan user dan database lokal yang sesuai. Tes memakai fixture sementara di dalam transaksi yang diakhiri
 ROLLBACK. Untuk PostgreSQL polos pada cluster baru, jalankan terlebih dahulu
-`supabase/tests/support/plain_postgres_auth.sql` sebagai admin. Harness ini
-mensimulasikan role dan claim request. Ia menguji PostgreSQL dan RLS pada
-level SQL, sedangkan autentikasi dan API HTTP Supabase perlu diuji terpisah.
+`supabase/tests/support/plain_postgres_auth.sql` sebagai admin pada cluster
+plain PostgreSQL baru dan disposable. Buat database berawalan `jobtrail_test_`
+dan hubungkan `psql` melalui loopback. Shim menolak database dengan skema Auth
+yang sudah ada. Ia mensimulasikan role dan claim untuk pengujian RLS tingkat SQL.
+
+## Smoke test Supabase hosted
+
+Target tetap `https://ehzdmsdhdlqmicmwbnwh.supabase.co`. Harness membutuhkan
+Node.js 22 atau lebih baru. Gunakan dua akun email/password disposable yang
+ditunjuk project owner. Jika belum tersedia, buka **Authentication → Users →
+Add user → Send invitation** di dashboard project ini. Kirim undangan ke dua
+alamat uji yang dikuasai tim. Masing-masing pemilik akun membuka undangan,
+menyelesaikan konfirmasi email, dan menetapkan password melalui alur Auth tim.
+Ambil **publishable key** dari pengaturan API project tersebut. Masukkan semua
+nilai di terminal lokal melalui prompt berikut. Simpan password dan token di luar repo dan chat.
+
+```powershell
+$env:JOBTRAIL_SUPABASE_PUBLISHABLE_KEY = Read-Host 'Publishable key JobTrail'
+$env:JOBTRAIL_TEST_A_EMAIL = Read-Host 'Email akun disposable A'
+$env:JOBTRAIL_TEST_B_EMAIL = Read-Host 'Email akun disposable B'
+$env:JOBTRAIL_TEST_A_PASSWORD = [pscredential]::new(
+    'smoke', (Read-Host 'Password akun A' -AsSecureString)
+).GetNetworkCredential().Password
+$env:JOBTRAIL_TEST_B_PASSWORD = [pscredential]::new(
+    'smoke', (Read-Host 'Password akun B' -AsSecureString)
+).GetNetworkCredential().Password
+try {
+    node supabase/tests/hosted_smoke.mjs
+} finally {
+    Remove-Item Env:JOBTRAIL_SUPABASE_PUBLISHABLE_KEY,
+        Env:JOBTRAIL_TEST_A_EMAIL, Env:JOBTRAIL_TEST_A_PASSWORD,
+        Env:JOBTRAIL_TEST_B_EMAIL, Env:JOBTRAIL_TEST_B_PASSWORD
+}
+```
+
+`node supabase/tests/hosted_smoke.mjs --check` memvalidasi input tanpa jaringan.
+Run hosted melaporkan PASS per kelompok dan exit 0 hanya jika seluruh asersi dan
+verifikasi cleanup berhasil. Run membuat UUID baru, memakai marker unik, dan
+melakukan cleanup melalui sesi pemilik. Bila terjadi kegagalan, cleanup tetap
+dicoba dengan memeriksa ID, pemilik, dan marker sebelum menghapus. Jika koneksi
+terputus atau proses dihentikan, gunakan marker dan ID yang dicetak untuk
+memeriksa sisa fixture melalui akun pemilik. Hapus hanya fixture yang cocok.
+Akun uji tetap tersedia untuk run berikutnya. Harness menguji jalur HTTP dan
+database. Integrasi sesi di aplikasi Flutter perlu diuji terpisah.
+
+### Hasil validasi hosted
+
+**24 November 2026 · Lulus, exit code `0`.** Smoke test dijalankan oleh pengguna
+pada project pengembangan JobTrail dengan hasil berikut.
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Auth | Login email/password berhasil untuk dua akun dengan identitas berbeda. |
+| REST dan RPC pemilik | Pembacaan, pembuatan lamaran dengan tautan dokumen, replay payload identik, snapshot, dan satu event history awal lulus. |
+| Isolasi RLS | Data akun lain tidak terlihat, mutasi lintas akun ditolak, dan tautan lintas akun memicu rollback. |
+| Izin akses | INSERT, UPDATE, dan DELETE langsung yang tidak berizin serta akses anonim ditolak. |
+| Integritas mutasi | Konflik revisi ditolak, dokumen tertaut terlindungi, dan penghapusan berantai berjalan sesuai kontrak. |
+| Cleanup | Seluruh fixture yang dilacak berhasil dibersihkan. |
+
+**Rekomendasi PR #14 · GO untuk merge.** Validasi backend hosted telah lulus.
+Integrasi autentikasi dan repository di Flutter masih tertunda.

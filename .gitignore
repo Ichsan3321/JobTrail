@@ -12,6 +12,14 @@
 .swiftpm/
 migrate_working_dir/
 
+# Environment secrets at any depth. Examples must contain placeholders only.
+.env
+.env.*
+.envrc
+*.env
+!.env.example
+!.env.*.example
+
 # IntelliJ related
 *.iml
 *.ipr
