@@ -5,6 +5,8 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sdk;
 
+import '../../data/jobtrail_repository.dart';
+import '../../data/supabase_jobtrail_repository.dart';
 import 'auth_callback_url_stub.dart'
     if (dart.library.js_interop) 'auth_callback_url_web.dart';
 import 'auth_configuration.dart';
@@ -13,7 +15,7 @@ import 'auth_provider.dart';
 class SupabaseAuthProvider implements SessionAuthProvider {
   SupabaseAuthProvider._(
     this._configuration,
-    this._auth,
+    this._client,
     this._storage,
     this._recovery,
   ) {
@@ -52,14 +54,65 @@ class SupabaseAuthProvider implements SessionAuthProvider {
     );
     return SupabaseAuthProvider._(
       configuration,
-      supabase.client.auth,
+      supabase.client,
       storage,
       recovery,
     );
   }
 
   final AuthConfiguration _configuration;
-  final sdk.GoTrueClient _auth;
+  final sdk.SupabaseClient _client;
+  sdk.GoTrueClient get _auth => _client.auth;
+
+  JobTrailRepository repositoryFor(String userId) {
+    final boundSession = _auth.currentSession;
+    final sessionId = _sessionId(boundSession);
+    final abort = Completer<void>();
+    sdk.Session? activeSession() {
+      final current = _auth.currentSession;
+      if (_disposed ||
+          _busy ||
+          current == null ||
+          current.isExpired ||
+          current.user.id != userId ||
+          sessionId == null ||
+          _sessionId(current) != sessionId) {
+        return null;
+      }
+      return current;
+    }
+
+    return SupabaseJobTrailRepository(
+      (name, params) async {
+        final session = activeSession();
+        if (session == null) {
+          throw const RepositoryFailure(RepositoryIssue.authentication);
+        }
+        // The SDK may consult a newer global session when sending. An explicit
+        // request header pins the credential captured for this owner and session.
+        try {
+          return await _client
+              .rpc<Object?>(name, params: params)
+              .setHeader('Authorization', 'Bearer ${session.accessToken}')
+              .retry(
+                enabled: false,
+                requestTimeout: const Duration(seconds: 15),
+              )
+              .abortSignal(abort.future);
+        } on sdk.PostgrestException catch (error) {
+          if (!abort.isCompleted &&
+              activeSession()?.accessToken == session.accessToken &&
+              const {'PGRST301', 'PGRST303', '401'}.contains(error.code)) {
+            _emit(const AuthSession.error(AuthIssue.expired));
+          }
+          rethrow;
+        }
+      },
+      isActive: () => activeSession() != null,
+      onDispose: abort.complete,
+    );
+  }
+
   final sdk.LocalStorage _storage;
   final sdk.LocalStorage _recovery;
   final _changes = StreamController<AuthSession>.broadcast();
@@ -155,7 +208,8 @@ class SupabaseAuthProvider implements SessionAuthProvider {
     return AuthIssue.unexpected;
   }
 
-  static String? _sessionId(sdk.Session session) {
+  static String? _sessionId(sdk.Session? session) {
+    if (session == null) return null;
     try {
       final payload = session.accessToken.split('.')[1];
       final claims = jsonDecode(
@@ -193,7 +247,22 @@ class SupabaseAuthProvider implements SessionAuthProvider {
       }
       return AuthSession.recovery(session.user.id, expiry);
     }
-    return AuthSession.authenticated(session.user.id, expiry);
+    final user = session.user;
+    final metadata = user.userMetadata;
+    String? displayName;
+    for (final key in ['display_name', 'full_name', 'name']) {
+      final value = metadata?[key];
+      if (value is String && value.trim().isNotEmpty) {
+        displayName = value.trim();
+        break;
+      }
+    }
+    return AuthSession.authenticated(
+      user.id,
+      expiry,
+      displayName: displayName,
+      email: user.email,
+    );
   }
 
   Future<void> _authChanged(sdk.AuthState event) async {

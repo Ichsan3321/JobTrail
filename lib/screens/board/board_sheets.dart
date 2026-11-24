@@ -519,14 +519,15 @@ class _PreviewSheetState extends State<_PreviewSheet> {
             ),
           Row(
             children: [
-              Expanded(
-                child: _SheetButton(
-                  key: const ValueKey('board-preview-status'),
-                  label: 'Ubah Status',
-                  onPressed: () => _changeStatus(app),
+              if (widget.store.allowsLocalWrites)
+                Expanded(
+                  child: _SheetButton(
+                    key: const ValueKey('board-preview-status'),
+                    label: 'Ubah Status',
+                    onPressed: () => _changeStatus(app),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
+              if (widget.store.allowsLocalWrites) const SizedBox(width: 10),
               Expanded(
                 child: _SheetButton(
                   key: const ValueKey('board-preview-detail'),

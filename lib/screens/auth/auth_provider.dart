@@ -25,18 +25,37 @@ enum AuthPhase { loading, signedOut, authenticated, recovery, error }
 class AuthSession {
   const AuthSession.loading() : this._(AuthPhase.loading);
   const AuthSession.signedOut() : this._(AuthPhase.signedOut);
-  const AuthSession.authenticated(String userId, DateTime expiresAt)
-    : this._(AuthPhase.authenticated, userId: userId, expiresAt: expiresAt);
+  const AuthSession.authenticated(
+    String userId,
+    DateTime expiresAt, {
+    String? displayName,
+    String? email,
+  }) : this._(
+         AuthPhase.authenticated,
+         userId: userId,
+         expiresAt: expiresAt,
+         displayName: displayName,
+         email: email,
+       );
   const AuthSession.recovery(String userId, DateTime expiresAt)
     : this._(AuthPhase.recovery, userId: userId, expiresAt: expiresAt);
   const AuthSession.error(AuthIssue issue)
     : this._(AuthPhase.error, issue: issue);
-  const AuthSession._(this.phase, {this.userId, this.expiresAt, this.issue});
+  const AuthSession._(
+    this.phase, {
+    this.userId,
+    this.expiresAt,
+    this.issue,
+    this.displayName,
+    this.email,
+  });
 
   final AuthPhase phase;
   final String? userId;
   final DateTime? expiresAt;
   final AuthIssue? issue;
+  final String? displayName;
+  final String? email;
 }
 
 enum AuthIssue implements Exception {

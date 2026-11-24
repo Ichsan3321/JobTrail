@@ -154,7 +154,11 @@ class _BoardScreenState extends State<BoardScreen> {
         key: const ValueKey('S02'),
         padding: const EdgeInsets.fromLTRB(20, 8, 20, AppSpacing.xl),
         children: [
-          _Header(onAdd: widget.navigation.openAdd),
+          _Header(
+            onAdd: widget.store.allowsLocalWrites
+                ? widget.navigation.openAdd
+                : null,
+          ),
           const SizedBox(height: AppSpacing.sm),
           _SearchRow(
             controller: _searchController,
@@ -292,7 +296,7 @@ Color _barColor(RecruitmentStatus status) => status == RecruitmentStatus.test
 
 class _Header extends StatelessWidget {
   const _Header({required this.onAdd});
-  final VoidCallback onAdd;
+  final VoidCallback? onAdd;
 
   @override
   Widget build(BuildContext context) => Row(

@@ -71,15 +71,18 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               _DocumentCard(
                 key: ValueKey('document-card-${document.id}'),
                 document: document,
+                allowWrites: store.allowsLocalWrites,
                 onTap: () => _showPreview(document),
                 onAction: (action) => _handleAction(action, document),
               ),
               const SizedBox(height: 12),
             ],
           const SizedBox(height: 12),
-          const Center(
+          Center(
             child: Text(
-              'Metadata disimpan lokal. File PDF/DOCX belum diunggah.',
+              store.isConnected
+                  ? 'Metadata akun dari server.'
+                  : 'Metadata disimpan lokal. File PDF/DOCX belum diunggah.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11, color: AppColors.gray),
             ),
@@ -121,7 +124,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           height: 48,
           child: FilledButton(
             key: const ValueKey('documents-add'),
-            onPressed: () => _openDocumentForm(),
+            onPressed: store.allowsLocalWrites
+                ? () => _openDocumentForm()
+                : null,
             style: FilledButton.styleFrom(
               padding: EdgeInsets.zero,
               minimumSize: const Size(48, 48),
@@ -239,7 +244,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               ),
               const SizedBox(height: 1),
               Text(
-                '$total metadata dokumen tersimpan lokal',
+                store.isConnected
+                    ? '$total metadata dokumen akun'
+                    : '$total metadata dokumen tersimpan lokal',
                 style: const TextStyle(fontSize: 11, color: AppColors.gray),
               ),
             ],
@@ -453,11 +460,13 @@ class _DocumentCard extends StatelessWidget {
     required this.document,
     required this.onTap,
     required this.onAction,
+    required this.allowWrites,
   });
 
   final AppDocument document;
   final VoidCallback onTap;
   final ValueChanged<_DocumentAction> onAction;
+  final bool allowWrites;
 
   Color get _iconBackground => switch (document.category) {
     DocumentCategory.cvResume => AppColors.primaryLight,
@@ -563,19 +572,21 @@ class _DocumentCard extends StatelessWidget {
                     color: AppColors.gray,
                   ),
                   onSelected: onAction,
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
                       value: _DocumentAction.preview,
                       child: Text('Lihat metadata'),
                     ),
-                    PopupMenuItem(
-                      value: _DocumentAction.edit,
-                      child: Text('Edit metadata'),
-                    ),
-                    PopupMenuItem(
-                      value: _DocumentAction.delete,
-                      child: Text('Hapus dokumen'),
-                    ),
+                    if (allowWrites)
+                      const PopupMenuItem(
+                        value: _DocumentAction.edit,
+                        child: Text('Edit metadata'),
+                      ),
+                    if (allowWrites)
+                      const PopupMenuItem(
+                        value: _DocumentAction.delete,
+                        child: Text('Hapus dokumen'),
+                      ),
                   ],
                 ),
               ],

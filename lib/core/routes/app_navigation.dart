@@ -12,6 +12,7 @@ class AppNavigation extends ChangeNotifier {
   final JobTrailStore store;
   final navigatorKey = GlobalKey<NavigatorState>();
   AppTab _selectedTab = AppTab.home;
+  bool _disposed = false;
   String? _scheduleApplicationId;
   String? _savedBoardApplicationId;
   AppTab get selectedTab => _selectedTab;
@@ -44,19 +45,23 @@ class AppNavigation extends ChangeNotifier {
   }
 
   Future<void> openAdd() async {
+    if (!store.allowsLocalWrites || _disposed) return;
     final savedId = await navigatorKey.currentState!.push<String>(
       MaterialPageRoute(
         settings: const RouteSettings(name: '/application/add'),
         builder: (_) => ApplicationFormScreen(store: store, navigation: this),
       ),
     );
-    if (savedId != null && store.applicationById(savedId) != null) {
+    if (!_disposed &&
+        savedId != null &&
+        store.applicationById(savedId) != null) {
       showTab(AppTab.board, applicationId: savedId);
     }
   }
 
   /// Call from Detail. Successful save pops back to that same live ID.
   Future<void> openEdit(String applicationId) async {
+    if (!store.allowsLocalWrites || _disposed) return;
     await navigatorKey.currentState!.push<String>(
       MaterialPageRoute(
         settings: RouteSettings(
@@ -81,4 +86,10 @@ class AppNavigation extends ChangeNotifier {
   }
 
   void back() => navigatorKey.currentState!.pop();
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 }

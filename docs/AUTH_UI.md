@@ -63,12 +63,15 @@ A successful reset signs out before returning to Login. Cancel also signs out.
 An invalid or interrupted callback stays outside the protected app. The SDK
 uses browser storage on Web and SharedPreferences on Android.
 
-Authenticated mode presents an integration-pending screen with **Keluar**.
-It creates an empty account-scoped store and exposes no CRUD until the shared
-repository is wired. The future repository must verify the active identity,
-consume the canonical snapshot/RPC contract, reject results from disposed
-scopes, and distinguish loading, empty, retry, and committed writes.
-[Backend contract](BACKEND_CONTRACT.md#akses-dan-kontrak-repository)
+Authenticated mode loads `jobtrail_load_snapshot` into a fresh account store.
+Loading and error views provide **Keluar** and errors allow retry. Once loaded,
+the five-tab AppShell displays each screen's own empty state. The Home avatar
+opens the account sheet with the authenticated identity, connection status, and
+refresh. Signing out from this sheet requires confirmation. The same Supabase
+client captures the
+request's bearer token and checks account and session before publishing results.
+Mutations stay gated in the UI pending screen integration.
+[Backend contract](BACKEND_CONTRACT.md) · [Team handoff](PERSISTENCE_HANDOFF.md)
 
 ## Manual Chrome and Android validation
 
@@ -77,11 +80,15 @@ the applicable steps in Chrome and on Android using the commands above.
 
 1. Start without a local session. Check Splash V2, Login, and the disabled
    Google action. Try an incorrect password, then sign in with an existing
-   confirmed account. Verify the pending screen has no demo data or write controls.
-2. Refresh Chrome or close and reopen Android. Check session restoration, then
-   sign out and sign in with the second account. Check that Back does not reveal
-   the prior protected screen. When a session expires without refresh, verify
-   the protected screen closes. Leave hosted token settings as configured.
+   confirmed account. Check snapshot loading, the five tabs, and read-only controls.
+   Use only designated test records already present in the account.
+2. Refresh Chrome or close and reopen Android, and check snapshot restoration.
+   Open the Home avatar and verify the account email and display name, then try
+   **Muat ulang data**. Choose **Keluar**, test **Batal**, and confirm logout
+   before entering the second account. Check its snapshot or empty state and that Back cannot reveal
+   the first account's screens. Simulate a snapshot network failure with Chrome
+   DevTools and retry once online. Verify expiry closes the protected screen
+   when the existing session expires without refresh. Keep hosted settings unchanged.
 3. With authorized mail delivery, register a designated disposable address. If
    confirmation is required, open its message on the requesting platform. On
    Chrome check the exact localhost port and that the code leaves the URL. On

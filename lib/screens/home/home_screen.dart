@@ -31,9 +31,17 @@ Widget _label(
 );
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.store, required this.navigation});
+  const HomeScreen({
+    super.key,
+    required this.store,
+    required this.navigation,
+    this.displayName,
+    this.onAccountPressed,
+  });
   final JobTrailStore store;
   final AppNavigation navigation;
+  final String? displayName;
+  final VoidCallback? onAccountPressed;
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -432,31 +440,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                           child: Text(app.company),
                         ),
-                    const SizedBox(height: 20),
-                    _surface(
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.local_fire_department_outlined,
-                            color: Color(0xFFEA7600),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _label('Konsistensi mingguan', 14, bold: true),
-                                _label(
-                                  'Data streak belum tersedia.',
-                                  12,
-                                  color: AppColors.gray,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -487,44 +470,74 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Row(
                 children: [
-                  Semantics(
-                    label: 'JobTrail',
-                    image: true,
-                    child: SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: Stack(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.asset(
-                              'assets/home/logo-background.png',
+                  if (widget.onAccountPressed != null)
+                    IconButton.filledTonal(
+                      tooltip: 'Buka menu akun',
+                      onPressed: widget.onAccountPressed,
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                        backgroundColor: AppColors.primaryLight,
+                        foregroundColor: AppColors.primary,
+                      ),
+                      icon: widget.displayName == null
+                          ? const Icon(Icons.person_outline_rounded)
+                          : ExcludeSemantics(
+                              child: Text(
+                                widget.displayName!.characters.first
+                                    .toUpperCase(),
+                                style: _text(
+                                  18,
+                                  color: AppColors.primary,
+                                  bold: true,
+                                ),
+                              ),
                             ),
-                          ),
-                          Positioned(
-                            left: 20.3,
-                            top: 8.3,
-                            width: 6.4,
-                            height: 6.4,
-                            child: Image.asset('assets/home/logo-dot.png'),
-                          ),
-                          Positioned(
-                            left: 13,
-                            top: 16,
-                            width: 12,
-                            height: 17,
-                            child: Image.asset('assets/home/logo-letter.png'),
-                          ),
-                        ],
+                    )
+                  else
+                    Semantics(
+                      label: 'JobTrail',
+                      image: true,
+                      child: SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.asset(
+                                'assets/home/logo-background.png',
+                              ),
+                            ),
+                            Positioned(
+                              left: 20.3,
+                              top: 8.3,
+                              width: 6.4,
+                              height: 6.4,
+                              child: Image.asset('assets/home/logo-dot.png'),
+                            ),
+                            Positioned(
+                              left: 13,
+                              top: 16,
+                              width: 12,
+                              height: 17,
+                              child: Image.asset('assets/home/logo-letter.png'),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _label('Selamat datang,', 12, color: AppColors.gray),
+                        _label(
+                          widget.displayName == null
+                              ? 'Selamat datang,'
+                              : 'Selamat datang, ${widget.displayName}',
+                          12,
+                          color: AppColors.gray,
+                        ),
                         _label('Lanjutkan perjalananmu', 17, bold: true),
                       ],
                     ),
@@ -606,33 +619,10 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Wrap(
-                                alignment: WrapAlignment.spaceBetween,
-                                spacing: 16,
-                                runSpacing: 6,
-                                children: [
-                                  _label(
-                                    'Target minggu ini',
-                                    13,
-                                    color: Colors.white70,
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.peachTint,
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: _label(
-                                      'Streak belum tersedia',
-                                      10,
-                                      color: const Color(0xFFB45309),
-                                      bold: true,
-                                    ),
-                                  ),
-                                ],
+                              _label(
+                                'Target minggu ini',
+                                13,
+                                color: Colors.white70,
                               ),
                               const SizedBox(height: 10),
                               _label(
@@ -842,11 +832,19 @@ class _HomeScreenState extends State<HomeScreen> {
             bottom: 16,
             child: FloatingActionButton(
               key: const ValueKey('home-add'),
-              onPressed: widget.navigation.openAdd,
-              tooltip: 'Tambah Lamaran',
+              onPressed: store.allowsLocalWrites
+                  ? widget.navigation.openAdd
+                  : null,
+              tooltip: store.allowsLocalWrites
+                  ? 'Tambah Lamaran'
+                  : 'Tambah lamaran belum tersedia untuk akun ini',
               shape: const CircleBorder(),
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              backgroundColor: store.allowsLocalWrites
+                  ? AppColors.primary
+                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+              foregroundColor: store.allowsLocalWrites
+                  ? Colors.white
+                  : Theme.of(context).disabledColor,
               elevation: 0,
               child: const Icon(Icons.add, size: 36),
             ),

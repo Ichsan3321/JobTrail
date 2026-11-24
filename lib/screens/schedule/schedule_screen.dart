@@ -268,7 +268,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             child: InkWell(
               key: const ValueKey('schedule-add'),
               borderRadius: BorderRadius.circular(AppRadius.button),
-              onTap: _openAddSheet,
+              onTap: widget.store.allowsLocalWrites ? _openAddSheet : null,
               child: const SizedBox(
                 width: 48,
                 height: 48,
@@ -824,7 +824,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             const SizedBox(height: AppSpacing.md),
             FilledButton(
               key: const ValueKey('schedule-empty-add'),
-              onPressed: _openAddSheet,
+              onPressed: widget.store.allowsLocalWrites ? _openAddSheet : null,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 minimumSize: const Size(180, 48),

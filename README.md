@@ -3,8 +3,9 @@
 Job & Internship Application Tracker untuk mahasiswa dan fresh graduate. Flutter/Dart; target pengembangan Android dan Web.
 
 Tujuh screen terintegrasi tersedia di mode demo dengan `JobTrailStore` in-memory.
-Mode Supabase menggunakan autentikasi email/password dan menampilkan status
-integrasi sambil menunggu repository persisten.
+Mode Supabase memuat snapshot akun setelah login email/password. Home, Board,
+Detail, Jadwal, Dokumen dan Statistik membaca data akun yang sama dari AppShell.
+Form Tambah/Edit dan aksi tulis menunggu integrasi layar.
 
 ## Menjalankan
 
@@ -13,10 +14,16 @@ flutter pub get
 flutter run -d chrome --web-hostname=localhost --web-port=3000 --dart-define=JOBTRAIL_AUTH_MODE=mock
 ```
 
-Untuk menjalankan autentikasi Supabase pada Chrome atau Android, ikuti
-[konfigurasi dan pengujian Auth](docs/AUTH_UI.md#run-locally).
+Untuk Chrome dengan konfigurasi Supabase lokal yang sudah disiapkan tim:
 
-## Interaksi dan data
+```powershell
+flutter run -d chrome --web-hostname=localhost --web-port=3000 --dart-define-from-file=.env.jobtrail.json
+```
+
+Lihat [konfigurasi Auth](docs/AUTH_UI.md#run-locally), [uji Chrome dua akun dan
+handoff layar](docs/PERSISTENCE_HANDOFF.md), serta [kontrak repository](docs/BACKEND_CONTRACT.md).
+
+## Interaksi di mode demo
 
 - Home menampilkan target mingguan, ringkasan, agenda dan lamaran dari store; notifikasi bersifat lokal/demo.
 - Board menyediakan pencarian, filter, urutan dan pratinjau sebelum Detail. Detail membuka ID yang benar, status/history, hapus dengan konfirmasi, agenda terkait dan pratinjau metadata dokumen.

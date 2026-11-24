@@ -3,7 +3,12 @@
 Baseline Flutter di `30db71d`. Migrasi ini menetapkan kontrak PostgreSQL untuk
 fase metadata. Supabase Auth mengelola identitas email/password dan menyediakan
 `auth.users.id`. Integrasi sesi Flutter dijelaskan di [AUTH_UI.md](AUTH_UI.md).
-Repository remote dan pemetaan snapshot/RPC masih menjadi tugas integrasi berikutnya.
+Kontrak Dart tersedia di `lib/data/jobtrail_repository.dart`. Adapter
+`SupabaseJobTrailRepository` memakai RPC yang diuraikan di dokumen ini dengan
+token sesi pemilik. `JobTrailWire` memvalidasi wire code, UUID, tanggal sipil WIB,
+instant ber-offset, revision, relasi dan history `event_no`. Nilai gaji bigint
+dikirim sebagai string desimal. Mappings membaca gaji sampai 9007199254740991
+rupiah agar Dart Web tetap bisa merepresentasikannya dengan tepat.
 
 ## Skema dan relasi
 
@@ -106,8 +111,8 @@ tidak mendapat akses tabel atau RPC. Jembatan privat hanya membaca identitas
 | `updateApplication(id, revision, draft)` | `jobtrail_update_application`. Payload lengkap sama seperti create dengan `p_expected_revision`. Kirim null untuk gaji kosong dan array kosong untuk melepaskan semua dokumen. | `id`, `revision` baru. Payload, tautan, dan event status bersifat atomik. |
 | `changeStatus(id, revision, status)` | `jobtrail_change_status(p_id, p_expected_revision, p_status)` | `id`, `revision`. Status sama mempertahankan revisi dan history. |
 | `deleteApplication(id, revision)` | `jobtrail_delete_application(p_id, p_expected_revision)` | UUID yang dihapus. |
-| `saveAgenda(id, mode, draft)` | `jobtrail_save_agenda(p_id, p_create, p_application_id, p_type, p_scheduled_at, p_location_or_link, p_notes)` | `id`, `replayed`. Mode edit mempertahankan ID dan hanya dapat pindah ke lamaran pemilik yang sama. |
-| `saveDocument(id, mode, draft)` | `jobtrail_save_document(p_id, p_create, p_title, p_category, p_file_name, p_version, p_notes)` | `id`, `updated_at`, `replayed`. Timestamp dari server. |
+| `saveAgenda(agenda, mode)` | `jobtrail_save_agenda(p_id, p_create, p_application_id, p_type, p_scheduled_at, p_location_or_link, p_notes)` | `id`, `replayed`. Mode edit mempertahankan ID dan hanya dapat pindah ke lamaran pemilik yang sama. |
+| `saveDocument(document, mode)` | `jobtrail_save_document(p_id, p_create, p_title, p_category, p_file_name, p_version, p_notes)` | `id`, `updated_at`, `replayed`. Timestamp dari server. |
 | `deleteAgenda(id)`, `deleteDocument(id)` | `jobtrail_delete_agenda(p_id)`, `jobtrail_delete_document(p_id)` | UUID yang dihapus. |
 
 Nama parameter draft RPC memakai awalan `p_` di depan nama kolom kamus.
@@ -115,8 +120,8 @@ Store menggunakan snapshot konsisten dan mempublikasikan state setelah commit.
 Jika refresh gagal setelah commit, ulangi baca dan pertahankan hasil commit.
 W13-02 memakai ID hasil commit untuk membuka Board. Store dan navigasi dipasang
 per sesi, dibuang saat identitas berubah, serta mengabaikan request sesi lama.
-Tampilkan state loading, empty, dan error/retry terpisah. Gunakan satu adapter
-bersama dan pertahankan in-memory repository untuk pengujian dan demo.
+Tampilkan state loading, empty, dan error/retry terpisah. Pengujian persistensi
+menggunakan repository fake. Mode mock memakai store in-memory yang sudah ada.
 
 **Retry.** Buat UUID sekali per percobaan create. ID dan payload awal yang cocok
 memberikan `replayed: true` selama row masih ada, termasuk setelah edit.
@@ -141,6 +146,11 @@ Untuk edit yang mengalami timeout, baca ulang sebelum mencoba dengan revisi baru
 
 ## Akses per screen
 
+Tabel ini memetakan kontrak per layar. AppShell backend saat ini mengaktifkan
+pembacaan untuk Home, Board, Detail, Jadwal, Dokumen dan Statistik. Mutasi dan form
+Tambah/Edit dibuka per layar setelah wiring dan validasi masing-masing.
+Lihat [handoff integrasi](PERSISTENCE_HANDOFF.md).
+
 | Screen | Operasi data |
 |---|---|
 | S01 Home | Baca aplikasi dan agenda, hitung target dan notifikasi. Read marker notifikasi lokal. |
@@ -161,8 +171,8 @@ Untuk edit yang mengalami timeout, baca ulang sebelum mencoba dengan revisi baru
 - Eligibility agenda dan batas tahun picker saat ini aturan UI. Database menjaga
   kepemilikan dan relasi tanggal. Setujui promosi eligibility ke server bila perlu.
 - Tautan dokumen tidak menyimpan urutan UI. Penyatuan label sumber dan urutan
-  tautan memerlukan keputusan produk. Sepakati batas nilai gaji yang dapat
-  ditangani layar Web sebelum mengubah string desimal menjadi Dart `int`.
+  tautan memerlukan keputusan produk. Nilai gaji di luar rentang integer presisi
+  Dart Web ditolak saat decoding.
 - Google OAuth, file privat, offline, realtime, dan persistensi read marker
   ditunda. Verifikasi Auth email/password, PostgREST, dan kebijakan penghapusan
   akun pada stack Supabase lokal saat pekerjaan integrasi dimulai.
