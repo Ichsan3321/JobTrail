@@ -36,7 +36,7 @@ class ApplicationDetailScreen extends StatelessWidget {
           child: Column(
             children: [
               _DetailHeader(
-                onEdit: application == null
+                onEdit: application == null || !store.allowsLocalWrites
                     ? null
                     : () => navigation.openEdit(applicationId),
               ),
@@ -50,7 +50,7 @@ class ApplicationDetailScreen extends StatelessWidget {
             ],
           ),
         ),
-        bottomNavigationBar: application == null
+        bottomNavigationBar: application == null || !store.allowsLocalWrites
             ? null
             : _DetailActions(
                 onChangeStatus: () => _changeStatus(context, application),
@@ -152,7 +152,9 @@ class ApplicationDetailScreen extends StatelessWidget {
         _RelatedAgenda(
           agenda: upcomingAgenda ?? agendas.lastOrNull,
           upcoming: upcomingAgenda != null,
-          onAdd: agendaEligibleStatuses.contains(application.status)
+          onAdd:
+              store.allowsLocalWrites &&
+                  agendaEligibleStatuses.contains(application.status)
               ? () => showAddAgendaSheet(
                   context,
                   store: store,

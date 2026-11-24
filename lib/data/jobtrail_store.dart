@@ -7,13 +7,25 @@ import '../models/application.dart';
 import '../models/recruitment_status.dart';
 import '../models/status_history.dart';
 import '../models/weekly_goal.dart';
+import 'jobtrail_repository.dart';
 import 'mock_data.dart';
 
-/// Single in-memory source. Consumers receive immutable snapshots.
+enum StorePhase { loading, ready, empty, error }
+
+/// A receipt proves the RPC committed. The caller must wait for refresh before
+/// opening a route that expects the record to be present in the snapshot.
+class CommittedMutation<T> {
+  const CommittedMutation(this.receipt, {required this.snapshotCurrent});
+  final T receipt;
+  final bool snapshotCurrent;
+}
+
+/// Shared source for explicit mock mode and authenticated snapshots.
 /// Inject a clock for live mutation timestamps; demo defaults to its fixed anchor.
 class JobTrailStore extends ChangeNotifier {
   JobTrailStore._({
-    required this.referenceDate,
+    required this._referenceDate,
+    this._repository,
     required this._weeklyGoal,
     required this._clock,
     Iterable<Application> applications = const [],
@@ -53,11 +65,203 @@ class JobTrailStore extends ChangeNotifier {
     );
   }
 
-  final DateTime referenceDate;
+  factory JobTrailStore.connected(JobTrailRepository repository) {
+    final date = AppDates.wibDate(DateTime.now());
+    return JobTrailStore._(
+      referenceDate: date,
+      weeklyGoal: WeeklyGoal(target: 8, weekStart: _weekStart(date)),
+      clock: DateTime.now,
+      repository: repository,
+    ).._phase = StorePhase.loading;
+  }
+
+  static DateTime _weekStart(DateTime date) =>
+      date.subtract(Duration(days: date.weekday - 1));
+
+  DateTime _referenceDate;
+  DateTime get referenceDate => _referenceDate;
+  DateTime? _serverInstant;
   final DateTime Function() _clock;
+  final JobTrailRepository? _repository;
+  final Map<String, int> _revisions = {};
+  StorePhase _phase = StorePhase.ready;
+  RepositoryFailure? _failure;
+  bool _disposed = false;
+  bool _mutating = false;
+  Future<void>? _refresh;
+
+  bool get isConnected => _repository != null;
+  bool get allowsLocalWrites => !isConnected && !_disposed;
+  StorePhase get phase => _phase;
+  RepositoryFailure? get failure => _failure;
+  bool get isMutating => _mutating;
+  bool get isRefreshing => _refresh != null;
+  bool get hasSnapshot => _serverInstant != null;
+  int? applicationRevision(String id) => _revisions[id];
+
+  void _requireLocal() {
+    if (!allowsLocalWrites) {
+      throw StateError('Aksi ini memerlukan integrasi penyimpanan server.');
+    }
+  }
+
+  void _requireActive() {
+    if (_disposed) {
+      throw const RepositoryFailure(RepositoryIssue.authentication);
+    }
+  }
+
+  Future<void> refresh() {
+    final repository = _repository;
+    if (_disposed || repository == null || _mutating) return Future.value();
+    return _refresh ??= Future<void>.microtask(() async {
+      try {
+        if (_disposed) return;
+        if (!hasSnapshot) _phase = StorePhase.loading;
+        notifyListeners();
+        await _reconcile(repository);
+      } finally {
+        _refresh = null;
+        if (!_disposed) notifyListeners();
+      }
+    });
+  }
+
+  Future<bool> _reconcile(JobTrailRepository repository) async {
+    try {
+      final snapshot = await repository.loadSnapshot();
+      if (_disposed) return false;
+      _applications
+        ..clear()
+        ..addEntries(
+          snapshot.applications.map((item) => MapEntry(item.id, item)),
+        );
+      _agendas
+        ..clear()
+        ..addEntries(snapshot.agendas.map((item) => MapEntry(item.id, item)));
+      _documents
+        ..clear()
+        ..addEntries(snapshot.documents.map((item) => MapEntry(item.id, item)));
+      _history
+        ..clear()
+        ..addAll(snapshot.history);
+      _revisions
+        ..clear()
+        ..addAll(snapshot.applicationRevisions);
+      _referenceDate = snapshot.referenceDate;
+      _serverInstant = snapshot.referenceInstantUtc;
+      _weeklyGoal = WeeklyGoal(target: 8, weekStart: _weekStart(referenceDate));
+      _phase = _applications.isEmpty && _agendas.isEmpty && _documents.isEmpty
+          ? StorePhase.empty
+          : StorePhase.ready;
+      _failure = null;
+      return true;
+    } catch (error) {
+      if (_disposed) return false;
+      _phase = StorePhase.error;
+      _failure = error is RepositoryFailure
+          ? error
+          : const RepositoryFailure(RepositoryIssue.unexpected);
+      if (_failure?.issue == RepositoryIssue.authentication) _clearSnapshot();
+      return false;
+    }
+  }
+
+  Future<CommittedMutation<T>> _mutate<T>(
+    Future<T> Function(JobTrailRepository repository) operation,
+  ) async {
+    _requireActive();
+    final repository = _repository;
+    if (repository == null ||
+        _mutating ||
+        isRefreshing ||
+        (_phase != StorePhase.ready && _phase != StorePhase.empty)) {
+      throw const RepositoryFailure(RepositoryIssue.busy);
+    }
+    _mutating = true;
+    notifyListeners();
+    try {
+      final receipt = await operation(repository);
+      _requireActive();
+      final current = await _reconcile(repository);
+      _requireActive();
+      return CommittedMutation(receipt, snapshotCurrent: current);
+    } on RepositoryFailure catch (failure) {
+      _requireActive();
+      if (failure.issue == RepositoryIssue.authentication) {
+        _clearSnapshot();
+        _failure = failure;
+        _phase = StorePhase.error;
+      } else if (failure.writeOutcomeUnknown ||
+          failure.issue == RepositoryIssue.revisionConflict ||
+          failure.issue == RepositoryIssue.unavailable ||
+          failure.issue == RepositoryIssue.documentUnavailable) {
+        await _reconcile(repository);
+        _requireActive();
+      }
+      rethrow;
+    } finally {
+      _mutating = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<CommittedMutation<ApplicationCreateReceipt>> createApplicationRemote(
+    ApplicationCreation intent,
+  ) => _mutate((repo) => repo.createApplication(intent.id, intent.draft));
+
+  Future<CommittedMutation<ApplicationReceipt>> updateApplicationRemote(
+    String id,
+    int expectedRevision,
+    ApplicationDraft draft,
+  ) => _mutate((repo) => repo.updateApplication(id, expectedRevision, draft));
+
+  Future<CommittedMutation<ApplicationReceipt>> changeStatusRemote(
+    String id,
+    int expectedRevision,
+    RecruitmentStatus status,
+  ) => _mutate((repo) => repo.changeStatus(id, expectedRevision, status));
+
+  Future<CommittedMutation<String>> deleteApplicationRemote(
+    String id,
+    int expectedRevision,
+  ) => _mutate((repo) => repo.deleteApplication(id, expectedRevision));
+
+  Future<CommittedMutation<AgendaReceipt>> saveAgendaRemote(
+    Agenda item,
+    SaveMode mode,
+  ) => _mutate((repo) => repo.saveAgenda(item, mode));
+
+  Future<CommittedMutation<String>> deleteAgendaRemote(String id) =>
+      _mutate((repo) => repo.deleteAgenda(id));
+
+  Future<CommittedMutation<DocumentReceipt>> saveDocumentRemote(
+    AppDocument item,
+    SaveMode mode,
+  ) => _mutate((repo) => repo.saveDocument(item, mode));
+
+  Future<CommittedMutation<String>> deleteDocumentRemote(String id) =>
+      _mutate((repo) => repo.deleteDocument(id));
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _repository?.dispose();
+    if (isConnected) _clearSnapshot();
+    super.dispose();
+  }
+
+  void _clearSnapshot() {
+    _applications.clear();
+    _agendas.clear();
+    _documents.clear();
+    _history.clear();
+    _revisions.clear();
+    _serverInstant = null;
+  }
 
   /// Current injected reference instant, normalized to UTC.
-  DateTime get referenceInstantUtc => _clock().toUtc();
+  DateTime get referenceInstantUtc => _serverInstant ?? _clock().toUtc();
   final Map<String, Application> _applications;
   final Map<String, Agenda> _agendas;
   final Map<String, AppDocument> _documents;
@@ -74,8 +278,8 @@ class JobTrailStore extends ChangeNotifier {
   AppDocument? documentById(String id) => _documents[id];
 
   /// Session-unique IDs for new agenda/document metadata; keep the ID on edit.
-  String nextAgendaId() => _newId('agenda');
-  String nextDocumentId() => _newId('doc');
+  String nextAgendaId() => isConnected ? newRecordId() : _newId('agenda');
+  String nextDocumentId() => isConnected ? newRecordId() : _newId('doc');
 
   List<Agenda> agendasFor(String applicationId) => List.unmodifiable(
     _agendas.values
@@ -120,6 +324,7 @@ class JobTrailStore extends ChangeNotifier {
       : (weeklyAchieved / _weeklyGoal.target).clamp(0.0, 1.0);
 
   String addApplication(ApplicationDraft draft) {
+    _requireLocal();
     _validateApplication(draft);
     final timestamp = _historyTimestamp(draft.appliedAt);
     final id = _newId('app');
@@ -130,6 +335,7 @@ class JobTrailStore extends ChangeNotifier {
   }
 
   void updateApplication(String id, ApplicationDraft draft) {
+    _requireLocal();
     final previous = _requireApplication(id);
     _validateApplication(draft);
     if (_agendas.values.any(
@@ -162,6 +368,7 @@ class JobTrailStore extends ChangeNotifier {
   }
 
   void changeStatus(String id, RecruitmentStatus status) {
+    _requireLocal();
     final app = _requireApplication(id);
     if (app.status == status) return;
     updateApplication(id, app.withStatus(status));
@@ -169,6 +376,7 @@ class JobTrailStore extends ChangeNotifier {
 
   /// Caller must confirm deletion in UI. Shared documents are retained.
   void deleteApplication(String id) {
+    _requireLocal();
     _requireApplication(id);
     _applications.remove(id);
     _agendas.removeWhere((_, value) => value.applicationId == id);
@@ -178,6 +386,7 @@ class JobTrailStore extends ChangeNotifier {
 
   /// Upsert metadata by stable ID. Does not upload or read a file.
   void saveDocument(AppDocument document) {
+    _requireLocal();
     _requireText(document.id, 'ID dokumen');
     _requireText(document.title, 'Judul dokumen');
     _requireText(document.fileName, 'Nama file');
@@ -188,6 +397,7 @@ class JobTrailStore extends ChangeNotifier {
   }
 
   void deleteDocument(String id) {
+    _requireLocal();
     if (!_documents.containsKey(id)) {
       throw StateError('Dokumen tidak ditemukan: $id');
     }
@@ -202,6 +412,7 @@ class JobTrailStore extends ChangeNotifier {
 
   /// Upsert agenda. The caller supplies a stable ID; no orphan is accepted.
   void saveAgenda(Agenda agenda) {
+    _requireLocal();
     _requireText(agenda.id, 'ID agenda');
     _requireText(agenda.locationOrLink, 'Lokasi/link agenda');
     final app = _requireApplication(agenda.applicationId);
@@ -216,6 +427,7 @@ class JobTrailStore extends ChangeNotifier {
   }
 
   void deleteAgenda(String id) {
+    _requireLocal();
     if (_agendas.remove(id) == null) {
       throw StateError('Agenda tidak ditemukan: $id');
     }
@@ -223,6 +435,7 @@ class JobTrailStore extends ChangeNotifier {
   }
 
   void setWeeklyGoal(WeeklyGoal goal) {
+    _requireLocal();
     if (goal.target < 0 ||
         !AppDates.isDate(goal.weekStart) ||
         goal.weekStart.weekday != DateTime.monday) {

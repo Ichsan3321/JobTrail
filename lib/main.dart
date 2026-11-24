@@ -31,7 +31,13 @@ Future<void> main() async {
   }
   try {
     final provider = await SupabaseAuthProvider.initialize(configuration);
-    runApp(JobTrailApp(authProvider: provider, disposeSessionProvider: true));
+    runApp(
+      JobTrailApp(
+        authProvider: provider,
+        repositoryFactory: provider.repositoryFor,
+        disposeSessionProvider: true,
+      ),
+    );
   } catch (_) {
     runApp(
       const JobTrailApp(

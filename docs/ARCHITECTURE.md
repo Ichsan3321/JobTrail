@@ -2,7 +2,9 @@
 
 Kontrak database dan handoff repository tersedia di [BACKEND_CONTRACT.md](BACKEND_CONTRACT.md).
 
-Dokumen kontrak frontend terintegrasi Week 12; `AGENTS.md` tetap otoritatif. Implementasi saat ini memakai data demo in-memory dan tidak mencakup backend.
+`AGENTS.md` mengatur ownership. Mode mock menggunakan store in-memory dengan
+clock deterministik. Mode Supabase menggunakan snapshot akun dari kontrak yang sama
+untuk semua layar.
 
 ## Struktur dan batas tanggung jawab
 
@@ -18,7 +20,10 @@ lib/
                                  # document metadata, status history, weekly goal
   data/
     mock_data.dart               # satu fixture, hanya bootstrap
-    jobtrail_store.dart          # satu ChangeNotifier + CRUD + agregasi
+    jobtrail_store.dart          # ChangeNotifier, state snapshot, CRUD mock, agregasi
+    jobtrail_repository.dart     # kontrak domain, snapshot, receipt, error
+    jobtrail_wire.dart           # codec PostgREST dan validasi snapshot
+    supabase_jobtrail_repository.dart # adapter ke RPC yang sudah ada
   widgets/                       # shell/navbar dan komponen shared
   screens/
     home/                        # S01 Ichsan
@@ -34,11 +39,13 @@ test/
 assets/fonts/                    # font asli + OFL per family
 ```
 
-`JobTrailApp` membuat tepat satu `JobTrailStore.demo()` dan `AppNavigation`.
-Dependency diteruskan melalui constructor, tanpa provider/service locator/codegen.
-`JobTrailApp(store: store)` mendukung test/preview kosong; caller bertanggung jawab
-dispose store yang diinjeksi. Store merupakan dependency tetap selama app terpasang;
-gunakan instance/key app baru bila mengganti store. Store milik app otomatis di-dispose.
+`JobTrailApp` membuat satu store dan navigator per scope. Mode mock memakai
+`JobTrailStore.demo()`; `JobTrailApp(store: store)` menerima store QA yang
+di-dispose oleh caller. Mode Supabase membuat `JobTrailStore.connected(repository)`
+untuk sesi autentikasi aktif. Login, logout, expiry, recovery dan pergantian akun
+mengganti scope terlindung sesuai lifecycle Auth. Scope menutup store dan repository
+lama. Satu client Supabase yang sudah ada memasok RPC dengan token yang diikat ke
+sesi yang memulai operasi.
 
 UI menggunakan `ListenableBuilder(listenable: store, builder: ...)` untuk perubahan data.
 Shell mendengarkan navigation. `IndexedStack` mempertahankan state lima tab; setiap tab memiliki header sendiri dan shell hanya memiliki navbar.
@@ -69,7 +76,25 @@ Entity baru belum tentu valid sampai lolos validasi store. UI menangkap
 `ArgumentError` (input invalid) dan `StateError` (ID/relasi tidak tersedia), lalu
 menampilkan pesan Indonesia yang sesuai; jangan menelan error atau mengklaim sukses.
 
-## Interface JobTrailStore
+## Lifecycle backend dan interface bersama
+
+Store memulai pembacaan snapshot asinkron. `phase` beralih dari `loading` ke
+`ready`, `empty` atau `error`. Pembacaan paralel berbagi satu Future.
+`refresh()` juga menjadi mekanisme retry. Snapshot yang lolos decoding diterbitkan
+sekaligus dan menyediakan tanggal acuan WIB, instant UTC, revision lamaran,
+serta target mingguan default 8. Home dan Statistik membaca derivasi store yang sama.
+
+`createApplicationRemote`, `updateApplicationRemote`, `changeStatusRemote`,
+`deleteApplicationRemote`, `saveAgendaRemote`, `deleteAgendaRemote`,
+`saveDocumentRemote` dan `deleteDocumentRemote` menyediakan fondasi tulis
+asinkron. Store menolak mutasi paralel dan memperbarui data setelah rekonsiliasi.
+Receipt dan `snapshotCurrent` membedakan commit terkonfirmasi dan status refresh.
+Conflict serta write outcome yang tidak pasti tetap dikembalikan sebagai kegagalan
+bertipe, dengan refresh rekonsiliasi bila masih dalam sesi yang sama. Mutasi demo
+sinkron diblokir oleh store akun. Lihat [kontrak serta handoff](PERSISTENCE_HANDOFF.md)
+untuk retry ID, expected revision dan status layar.
+
+## Interface JobTrailStore dan mutasi mock
 
 | API | Kontrak |
 |---|---|
@@ -160,4 +185,4 @@ Material icons pada shell adalah placeholder, bukan aset logo/icon Figma final.
 
 Ketujuh screen sudah terintegrasi. Board membuka pratinjau sebelum Detail; Detail membuka Form, jadwal terkait, atau pratinjau metadata dokumen berdasarkan ID. Detail tanpa agenda menawarkan sheet agenda untuk status eligible. Jadwal terkait mereset filter tipe untuk konteks baru, sementara filter jadwal umum dipertahankan. Sheet dokumen digunakan bersama oleh Detail dan Dokumen dan membaca store secara reaktif.
 
-Clock demo terinjeksi menyediakan `referenceInstantUtc`; perbandingan agenda memakai instant UTC, sedangkan pengelompokan kalender memakai tanggal sipil WIB. Dokumen disimpan sebagai metadata saja. Tidak ada auth, backend, persistence, upload, push notification atau deployment. `saveAgenda` adalah upsert dan `deleteAgenda` tersedia pada store; jangan menyimpulkan bahwa seluruh operasi agenda memiliki kontrol UI. Status implementasi dan bukti QA ada di [QA](QA.md).
+Clock demo terinjeksi menyediakan `referenceInstantUtc`; perbandingan agenda memakai instant UTC, sedangkan pengelompokan kalender memakai tanggal sipil WIB. Dokumen disimpan sebagai metadata saja. Integrasi backend tahap ini menyediakan pembacaan metadata. Upload dan push notification berada di luar cakupan. `saveAgenda` adalah upsert dan `deleteAgenda` tersedia pada store; jangan menyimpulkan bahwa seluruh operasi agenda memiliki kontrol UI. Status implementasi dan bukti QA ada di [QA](QA.md).
