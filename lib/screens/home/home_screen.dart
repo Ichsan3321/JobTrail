@@ -266,53 +266,57 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ),
   );
-  Widget _notification(Agenda a) => InkWell(
-    onTap: () {
-      setState(() => _read.add(a.id));
-      Navigator.pop(context);
-      widget.navigation.openDetail(a.applicationId);
-    },
-    child: _surface(
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _tileIcon(a),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _label(
-                  a.type == AgendaType.interview
-                      ? 'Interview mendatang'
-                      : 'Psikotes terjadwal',
-                  14,
-                  bold: true,
-                ),
-                _label(
-                  store.applicationById(a.applicationId)?.company ?? '',
-                  13,
-                  color: AppColors.gray,
-                ),
-                _label(
-                  '${AppDates.formatWib(a.scheduledAt)} · ${a.locationOrLink}',
-                  12,
-                  color: AppColors.gray,
-                ),
-              ],
+  Widget _notification(Agenda a) {
+    final isPast = a.scheduledAt.isBefore(store.referenceInstantUtc);
+    final title = switch ((a.type, isPast)) {
+      (AgendaType.interview, false) => 'Interview mendatang',
+      (AgendaType.interview, true) => 'Jadwal interview lalu',
+      (AgendaType.test, false) => 'Psikotes terjadwal',
+      (AgendaType.test, true) => 'Jadwal psikotes lalu',
+    };
+    return InkWell(
+      onTap: () {
+        setState(() => _read.add(a.id));
+        Navigator.pop(context);
+        widget.navigation.openDetail(a.applicationId);
+      },
+      child: _surface(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tileIcon(a),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _label(title, 14, bold: true),
+                  _label(
+                    store.applicationById(a.applicationId)?.company ?? '',
+                    13,
+                    color: AppColors.gray,
+                  ),
+                  _label(
+                    '${AppDates.formatWib(a.scheduledAt)} · ${a.locationOrLink}',
+                    12,
+                    color: AppColors.gray,
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (!_read.contains(a.id))
-            const Icon(
-              Icons.radio_button_checked,
-              size: 16,
-              color: AppColors.primary,
-            ),
-        ],
+            if (!_read.contains(a.id))
+              const Icon(
+                Icons.radio_button_checked,
+                size: 16,
+                color: AppColors.primary,
+              ),
+          ],
+        ),
+        color: const Color(0xFFFAFAFF),
       ),
-      color: const Color(0xFFFAFAFF),
-    ),
-  );
+    );
+  }
+
   Widget _tileIcon(Agenda a) => Container(
     width: 44,
     height: 44,
@@ -400,24 +404,37 @@ class _HomeScreenState extends State<HomeScreen> {
                     _label('Aktivitas Minggu Ini', 15, bold: true),
                     const SizedBox(height: 8),
                     LayoutBuilder(
-                      builder: (context, constraints) => Wrap(
-                        spacing: 5,
-                        runSpacing: 5,
-                        children: [
-                          for (var i = 0; i < 7; i++)
-                            SizedBox(
-                              width: (constraints.maxWidth - 30) / 7,
-                              child: _filter(
-                                '${_days[i]}\n${store.applicationsInPeriod(
-                                  start: start.add(Duration(days: i)),
-                                  end: start.add(Duration(days: i + 1)),
-                                ).length}',
-                                selected == i,
-                                () => refresh(() => selected = i),
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final minTarget =
+                            MediaQuery.textScalerOf(context).scale(12) > 18
+                            ? 64.0
+                            : 48.0;
+                        final columns = (width / minTarget).floor().clamp(1, 7);
+                        final spacing = columns == 1
+                            ? 0.0
+                            : ((width - minTarget * columns) / (columns - 1))
+                                  .clamp(0.0, 5.0);
+                        return Wrap(
+                          spacing: spacing,
+                          runSpacing: 5,
+                          children: [
+                            for (var i = 0; i < 7; i++)
+                              SizedBox(
+                                width:
+                                    (width - (columns - 1) * spacing) / columns,
+                                child: _filter(
+                                  '${_days[i]}\n${store.applicationsInPeriod(
+                                    start: start.add(Duration(days: i)),
+                                    end: start.add(Duration(days: i + 1)),
+                                  ).length}',
+                                  selected == i,
+                                  () => refresh(() => selected = i),
+                                ),
                               ),
-                            ),
-                        ],
-                      ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 10),
                     _surface(
