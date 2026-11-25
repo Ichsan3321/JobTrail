@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_tokens.dart';
+import '../../data/jobtrail_repository.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/app_document.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/input_field.dart';
 import 'document_preview_sheet.dart';
+
+bool _canSaveDocuments(JobTrailStore store) =>
+    store.allowsLocalWrites ||
+    (store.isConnected &&
+        store.hasSnapshot &&
+        !store.isMutating &&
+        !store.isRefreshing &&
+        (store.phase == StorePhase.ready || store.phase == StorePhase.empty));
 
 class DocumentsScreen extends StatefulWidget {
   const DocumentsScreen({super.key, required this.store});
@@ -20,8 +29,21 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
   DocumentCategory? _selectedCategory;
+  bool _deleteBusy = false;
+  ({String id, bool committed})? _deleteRecovery;
 
   JobTrailStore get store => widget.store;
+  bool get _canWriteDocuments =>
+      !_deleteBusy && _deleteRecovery == null && _canSaveDocuments(store);
+
+  @override
+  void didUpdateWidget(covariant DocumentsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.store, store)) {
+      _deleteBusy = false;
+      _deleteRecovery = null;
+    }
+  }
 
   @override
   void dispose() {
@@ -57,6 +79,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
         children: [
           _buildHeader(total),
+          if (_deleteRecovery != null) _buildDeleteRecovery(),
           const SizedBox(height: 18),
           _buildSearchField(),
           const SizedBox(height: 12),
@@ -71,7 +94,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               _DocumentCard(
                 key: ValueKey('document-card-${document.id}'),
                 document: document,
-                allowWrites: store.allowsLocalWrites,
+                allowWrites: _canWriteDocuments,
+                allowEdits: _canWriteDocuments,
                 onTap: () => _showPreview(document),
                 onAction: (action) => _handleAction(action, document),
               ),
@@ -124,9 +148,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           height: 48,
           child: FilledButton(
             key: const ValueKey('documents-add'),
-            onPressed: store.allowsLocalWrites
-                ? () => _openDocumentForm()
-                : null,
+            onPressed: _canWriteDocuments ? () => _openDocumentForm() : null,
             style: FilledButton.styleFrom(
               padding: EdgeInsets.zero,
               minimumSize: const Size(48, 48),
@@ -304,40 +326,48 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Future<void> _openDocumentForm([AppDocument? existing]) async {
-    final saved = await showModalBottomSheet<bool>(
+    final activeStore = store;
+    if (!_canWriteDocuments) return;
+    final current = existing == null
+        ? null
+        : activeStore.documentById(existing.id);
+    if (existing != null && current == null) {
+      _showMessage(RepositoryIssue.unavailable.message);
+      return;
+    }
+    final message = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      // Keep the form route available while a mutation is in flight.
+      // Dismiss through Back or Batal, never through a barrier/drag.
+      isDismissible: false,
+      enableDrag: false,
+      showDragHandle: false,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (context) => _DocumentFormSheet(
-        document: existing,
-        onSave: (value) {
-          store.saveDocument(
-            AppDocument(
-              id: existing?.id ?? store.nextDocumentId(),
-              title: value.title,
-              category: value.category,
-              fileName: value.fileName,
-              version: value.version,
-              updatedAt: store.referenceInstantUtc,
-              notes: value.notes,
-            ),
-          );
-        },
-      ),
+      builder: (context) =>
+          _DocumentFormSheet(document: current, store: activeStore),
     );
-    if (!mounted || saved != true) return;
-    _showMessage(
-      existing == null
-          ? 'Metadata dokumen ditambahkan.'
-          : 'Metadata dokumen diperbarui.',
-    );
+    if (!mounted ||
+        !identical(store, activeStore) ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        message == null) {
+      return;
+    }
+    _showMessage(message);
   }
 
   Future<void> _confirmDelete(AppDocument document) async {
-    final linkedApplications = store.applications
+    final activeStore = store;
+    if (!_canWriteDocuments) return;
+    final current = activeStore.documentById(document.id);
+    if (current == null) {
+      _showMessage(RepositoryIssue.unavailable.message);
+      return;
+    }
+    final linkedApplications = activeStore.applications
         .where((application) => application.documentIds.contains(document.id))
         .toList();
     if (linkedApplications.isNotEmpty) {
@@ -366,7 +396,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Hapus dokumen?'),
-        content: Text('Metadata "${document.title}" akan dihapus dari daftar.'),
+        content: Text('Metadata "${current.title}" akan dihapus dari daftar.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -379,14 +409,145 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         ],
       ),
     );
-    if (!mounted || confirmed != true) return;
-
-    try {
-      store.deleteDocument(document.id);
-      _showMessage('Metadata dokumen dihapus.');
-    } on StateError catch (error) {
-      _showMessage(error.message);
+    if (!mounted ||
+        !identical(store, activeStore) ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        confirmed != true ||
+        !_canWriteDocuments) {
+      return;
     }
+    if (activeStore.documentById(document.id) == null) {
+      _showMessage(RepositoryIssue.unavailable.message);
+      return;
+    }
+    if (activeStore.applications.any(
+      (application) => application.documentIds.contains(document.id),
+    )) {
+      _showMessage(RepositoryIssue.documentInUse.message);
+      return;
+    }
+
+    setState(() => _deleteBusy = true);
+    try {
+      if (!activeStore.isConnected) {
+        activeStore.deleteDocument(document.id);
+        _showDeleteResult(activeStore, 'Metadata dokumen dihapus.');
+        return;
+      }
+      final result = await activeStore.deleteDocumentRemote(document.id);
+      if (!mounted || !identical(store, activeStore)) return;
+      if (!result.snapshotCurrent ||
+          activeStore.documentById(result.receipt) != null) {
+        setState(() {
+          _deleteRecovery = (id: result.receipt, committed: true);
+        });
+        _showDeleteResult(
+          activeStore,
+          'Penghapusan dikonfirmasi server. Muat ulang daftar dokumen.',
+        );
+        return;
+      }
+      _showDeleteResult(activeStore, 'Metadata dokumen dihapus.');
+    } on RepositoryFailure catch (failure) {
+      if (!mounted || !identical(store, activeStore)) return;
+      if (failure.writeOutcomeUnknown) {
+        setState(() {
+          _deleteRecovery = (id: document.id, committed: false);
+        });
+        _showDeleteResult(
+          activeStore,
+          'Hasil hapus belum terkonfirmasi. Muat ulang sebelum mencoba lagi.',
+        );
+      } else {
+        _showDeleteResult(activeStore, failure.issue.message);
+      }
+    } on StateError catch (error) {
+      _showDeleteResult(activeStore, error.message);
+    } catch (_) {
+      if (!mounted || !identical(store, activeStore)) return;
+      if (activeStore.isConnected) {
+        setState(() {
+          _deleteRecovery = (id: document.id, committed: false);
+        });
+      }
+      _showDeleteResult(activeStore, RepositoryIssue.unexpected.message);
+    } finally {
+      if (mounted && identical(store, activeStore)) {
+        setState(() => _deleteBusy = false);
+      }
+    }
+  }
+
+  Widget _buildDeleteRecovery() => Padding(
+    padding: const EdgeInsets.only(top: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            _deleteRecovery!.committed
+                ? 'Penghapusan dikonfirmasi server. Daftar perlu dimuat ulang.'
+                : 'Hasil hapus belum terkonfirmasi. Periksa data terbaru dahulu.',
+          ),
+        ),
+        TextButton(
+          key: const ValueKey('documents-delete-refresh'),
+          onPressed: _deleteBusy || store.isMutating || store.isRefreshing
+              ? null
+              : _refreshAfterDelete,
+          child: const Text('Muat Ulang Dokumen'),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _refreshAfterDelete() async {
+    final activeStore = store;
+    final recovery = _deleteRecovery;
+    if (recovery == null ||
+        _deleteBusy ||
+        activeStore.isMutating ||
+        activeStore.isRefreshing) {
+      return;
+    }
+    setState(() => _deleteBusy = true);
+    try {
+      await activeStore.refresh();
+      if (!mounted || !identical(store, activeStore)) return;
+      if (!_canSaveDocuments(activeStore)) {
+        _showDeleteResult(
+          activeStore,
+          activeStore.failure?.issue.message ?? RepositoryIssue.busy.message,
+        );
+        return;
+      }
+      final stillPresent = activeStore.documentById(recovery.id) != null;
+      setState(() => _deleteRecovery = null);
+      _showDeleteResult(
+        activeStore,
+        stillPresent
+            ? (recovery.committed
+                  ? 'Dokumen muncul pada data terbaru. Periksa sebelum bertindak.'
+                  : 'Dokumen masih tersedia. Periksa sebelum mencoba hapus lagi.')
+            : (recovery.committed
+                  ? 'Metadata dokumen dihapus.'
+                  : 'Dokumen tidak ditemukan pada data terbaru.'),
+      );
+    } finally {
+      if (mounted && identical(store, activeStore)) {
+        setState(() => _deleteBusy = false);
+      }
+    }
+  }
+
+  void _showDeleteResult(JobTrailStore activeStore, String message) {
+    if (!mounted ||
+        !identical(store, activeStore) ||
+        ModalRoute.of(context)?.isCurrent != true) {
+      return;
+    }
+    _showMessage(message);
   }
 
   void _showMessage(String message) {
@@ -461,12 +622,14 @@ class _DocumentCard extends StatelessWidget {
     required this.onTap,
     required this.onAction,
     required this.allowWrites,
+    required this.allowEdits,
   });
 
   final AppDocument document;
   final VoidCallback onTap;
   final ValueChanged<_DocumentAction> onAction;
   final bool allowWrites;
+  final bool allowEdits;
 
   Color get _iconBackground => switch (document.category) {
     DocumentCategory.cvResume => AppColors.primaryLight,
@@ -577,7 +740,7 @@ class _DocumentCard extends StatelessWidget {
                       value: _DocumentAction.preview,
                       child: Text('Lihat metadata'),
                     ),
-                    if (allowWrites)
+                    if (allowEdits)
                       const PopupMenuItem(
                         value: _DocumentAction.edit,
                         child: Text('Edit metadata'),
@@ -633,27 +796,11 @@ class _DocumentCard extends StatelessWidget {
 
 enum _DocumentAction { preview, edit, delete }
 
-class _DocumentFormValue {
-  const _DocumentFormValue({
-    required this.title,
-    required this.category,
-    required this.fileName,
-    required this.version,
-    required this.notes,
-  });
-
-  final String title;
-  final DocumentCategory category;
-  final String fileName;
-  final String version;
-  final String notes;
-}
-
 class _DocumentFormSheet extends StatefulWidget {
-  const _DocumentFormSheet({this.document, required this.onSave});
+  const _DocumentFormSheet({this.document, required this.store});
 
   final AppDocument? document;
-  final ValueChanged<_DocumentFormValue> onSave;
+  final JobTrailStore store;
 
   @override
   State<_DocumentFormSheet> createState() => _DocumentFormSheetState();
@@ -667,6 +814,25 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   late final TextEditingController _notesController;
   late DocumentCategory _category;
   String? _saveError;
+  bool _saving = false;
+  bool _committed = false;
+  bool _needsReview = false;
+  String? _createId;
+  String? _committedId;
+  AppDocument? _pendingCreate;
+  bool _seenPendingCreate = false;
+  bool _confirmingDiscard = false;
+  late final Listenable _draftChanges;
+
+  JobTrailStore get store => widget.store;
+  bool get _creating => widget.document == null;
+  bool get _lockFields => _saving || _committed || _pendingCreate != null;
+  bool get _routeCurrent =>
+      mounted && ModalRoute.of(context)?.isCurrent == true;
+  bool get _routeActive => mounted && ModalRoute.of(context)?.isActive == true;
+  String get _successMessage => _creating
+      ? 'Metadata dokumen ditambahkan.'
+      : 'Metadata dokumen diperbarui.';
 
   @override
   void initState() {
@@ -679,6 +845,13 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     );
     _notesController = TextEditingController(text: document?.notes ?? '');
     _category = document?.category ?? DocumentCategory.cvResume;
+    _draftChanges = Listenable.merge([
+      store,
+      _titleController,
+      _fileNameController,
+      _versionController,
+      _notesController,
+    ]);
   }
 
   @override
@@ -690,8 +863,75 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     super.dispose();
   }
 
+  // Compare the raw draft, including whitespace and category-only changes.
+  // A committed receipt is not an unsaved draft.
+  bool get _dirty {
+    final original = widget.document;
+    return !_committed &&
+        (_pendingCreate != null ||
+            _needsReview ||
+            _titleController.text != (original?.title ?? '') ||
+            _fileNameController.text != (original?.fileName ?? '') ||
+            _versionController.text != (original?.version ?? '1.0') ||
+            _notesController.text != (original?.notes ?? '') ||
+            _category != (original?.category ?? DocumentCategory.cvResume));
+  }
+
+  Future<void> _requestClose() async {
+    if (_saving || _confirmingDiscard || !_routeCurrent) return;
+    if (!_dirty) {
+      Navigator.pop(context);
+      return;
+    }
+    _confirmingDiscard = true;
+    final bool? discard;
+    try {
+      discard = await showDialog<bool>(
+        context: context,
+        useRootNavigator: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Buang perubahan?'),
+          content: Text(
+            _pendingCreate != null || _needsReview
+                ? 'Draft ini akan ditutup. Jika hasil simpan belum '
+                      'terkonfirmasi, periksa data server sebelum membuat '
+                      'atau mengubah dokumen lagi.'
+                : 'Perubahan metadata yang belum disimpan akan hilang.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Lanjut mengedit'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Buang perubahan'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _confirmingDiscard = false;
+    }
+    if (!mounted) return;
+    if (discard == true && _routeCurrent && !_saving) {
+      Navigator.pop(context);
+    }
+  }
+
   @override
-  Widget build(BuildContext context) => SafeArea(
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: _draftChanges,
+    builder: (context, _) => PopScope<String>(
+      canPop: !_saving && !_dirty,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && !_saving) _requestClose();
+      },
+      child: _buildForm(context),
+    ),
+  );
+
+  Widget _buildForm(BuildContext context) => SafeArea(
     top: false,
     child: Padding(
       padding: EdgeInsets.fromLTRB(
@@ -732,44 +972,57 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 style: TextStyle(fontSize: 12, color: AppColors.gray),
               ),
               const SizedBox(height: 18),
-              InputField(
-                label: 'Judul dokumen',
-                controller: _titleController,
-                validator: _requiredValidator,
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<DocumentCategory>(
-                key: const ValueKey('document-form-category'),
-                initialValue: _category,
-                decoration: const InputDecoration(labelText: 'Kategori'),
-                items: [
-                  for (final category in DocumentCategory.values)
-                    DropdownMenuItem(
-                      value: category,
-                      child: Text(category.label),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value != null) setState(() => _category = value);
-                },
-              ),
-              const SizedBox(height: 12),
-              InputField(
-                label: 'Nama file',
-                controller: _fileNameController,
-                validator: _requiredValidator,
-              ),
-              const SizedBox(height: 12),
-              InputField(
-                label: 'Versi',
-                controller: _versionController,
-                validator: _requiredValidator,
-              ),
-              const SizedBox(height: 12),
-              InputField(
-                label: 'Catatan (opsional)',
-                controller: _notesController,
-                maxLines: 3,
+              AbsorbPointer(
+                absorbing: _lockFields,
+                child: ExcludeFocus(
+                  excluding: _lockFields,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InputField(
+                        label: 'Judul dokumen',
+                        controller: _titleController,
+                        validator: _requiredValidator,
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<DocumentCategory>(
+                        key: const ValueKey('document-form-category'),
+                        initialValue: _category,
+                        decoration: const InputDecoration(
+                          labelText: 'Kategori',
+                        ),
+                        items: [
+                          for (final category in DocumentCategory.values)
+                            DropdownMenuItem(
+                              value: category,
+                              child: Text(category.label),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) setState(() => _category = value);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      InputField(
+                        label: 'Nama file',
+                        controller: _fileNameController,
+                        validator: _requiredValidator,
+                      ),
+                      const SizedBox(height: 12),
+                      InputField(
+                        label: 'Versi',
+                        controller: _versionController,
+                        validator: _requiredValidator,
+                      ),
+                      const SizedBox(height: 12),
+                      InputField(
+                        label: 'Catatan (opsional)',
+                        controller: _notesController,
+                        maxLines: 3,
+                      ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 18),
               if (_saveError != null) ...[
@@ -789,20 +1042,44 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 width: double.infinity,
                 child: FilledButton(
                   key: const ValueKey('document-form-save'),
-                  onPressed: _save,
+                  onPressed:
+                      _saving ||
+                          _committed ||
+                          _needsReview ||
+                          !_canSaveDocuments(store)
+                      ? null
+                      : _save,
                   child: Text(
-                    widget.document == null
+                    _saving
+                        ? 'Memproses...'
+                        : _pendingCreate != null
+                        ? 'Coba Simpan Lagi'
+                        : _creating
                         ? 'Simpan Metadata'
                         : 'Simpan Perubahan',
                   ),
                 ),
               ),
+              if (store.isConnected &&
+                  (_committed ||
+                      _needsReview ||
+                      store.phase == StorePhase.error))
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    key: const ValueKey('document-form-refresh'),
+                    onPressed: _saving || store.isMutating || store.isRefreshing
+                        ? null
+                        : _refreshSnapshot,
+                    child: const Text('Muat ulang data'),
+                  ),
+                ),
               const SizedBox(height: 6),
               SizedBox(
                 width: double.infinity,
                 child: TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Batal'),
+                  onPressed: _saving ? null : _requestClose,
+                  child: Text(_committed ? 'Tutup' : 'Batal'),
                 ),
               ),
             ],
@@ -815,26 +1092,173 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   String? _requiredValidator(String? value) =>
       value == null || value.trim().isEmpty ? 'Bagian ini wajib diisi.' : null;
 
-  void _save() {
+  bool _sameDocument(AppDocument? a, AppDocument b) =>
+      a != null &&
+      a.id == b.id &&
+      a.updatedAt == b.updatedAt &&
+      a.title == b.title &&
+      a.category == b.category &&
+      a.fileName == b.fileName &&
+      a.version == b.version &&
+      a.notes == b.notes;
+
+  Future<void> _refreshSnapshot() async {
+    if (_saving || !_routeCurrent) return;
+    setState(() => _saving = true);
+    await store.refresh();
+    if (!_routeActive) return;
+    final ready = _canSaveDocuments(store);
+    if (_pendingCreate != null && ready) {
+      _seenPendingCreate |= store.documentById(_pendingCreate!.id) != null;
+    }
+    setState(() {
+      _saving = false;
+      _saveError = !ready
+          ? (_committed
+                ? 'Metadata sudah disimpan di server, tetapi data terbaru '
+                      'belum dapat dimuat. Coba muat ulang.'
+                : store.failure?.issue.message ?? RepositoryIssue.busy.message)
+          : _committed
+          ? (store.documentById(_committedId!) == null
+                ? 'Metadata sudah disimpan, tetapi dokumen tidak tersedia '
+                      'pada data terbaru.'
+                : 'Metadata sudah disimpan. Data terbaru telah dimuat.')
+          : _needsReview
+          ? 'Data terbaru telah dimuat. Catat draft ini sebelum menutup form. '
+                'Tinjau metadata terbaru sebelum mengedit kembali.'
+          : _pendingCreate != null
+          ? 'Hasil simpan belum terkonfirmasi. Coba simpan lagi dengan '
+                'ID dan isian yang sama.'
+          : 'Data terbaru telah dimuat. Silakan simpan kembali.';
+    });
+    if (ready &&
+        _committed &&
+        store.documentById(_committedId!) != null &&
+        _routeCurrent) {
+      if (!mounted) return;
+      Navigator.pop(context, _successMessage);
+    }
+  }
+
+  Future<void> _save() async {
+    if (_saving ||
+        _committed ||
+        _needsReview ||
+        !_routeCurrent ||
+        !_canSaveDocuments(store)) {
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _saveError = null);
-    try {
-      widget.onSave(
-        _DocumentFormValue(
+    final original = widget.document;
+    if (original != null &&
+        !_sameDocument(store.documentById(original.id), original)) {
+      setState(() {
+        _needsReview = true;
+        _saveError = RepositoryIssue.revisionConflict.message;
+      });
+      return;
+    }
+    final pending = _pendingCreate;
+    if (pending != null &&
+        _seenPendingCreate &&
+        store.documentById(pending.id) == null) {
+      setState(() {
+        _needsReview = true;
+        _saveError =
+            'Dokumen sebelumnya sudah tidak tersedia. '
+            'Jangan ulangi pembuatan lama. Tinjau data terbaru terlebih dahulu.';
+      });
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    final item =
+        pending ??
+        AppDocument(
+          id: original?.id ?? (_createId ??= store.nextDocumentId()),
           title: _titleController.text.trim(),
           category: _category,
           fileName: _fileNameController.text.trim(),
           version: _versionController.text.trim(),
+          updatedAt: store.referenceInstantUtc,
           notes: _notesController.text.trim(),
-        ),
+        );
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      if (store.allowsLocalWrites) {
+        store.saveDocument(item);
+        if (_routeCurrent) Navigator.pop(context, _successMessage);
+        return;
+      }
+      final result = await store.saveDocumentRemote(
+        item,
+        _creating ? SaveMode.create : SaveMode.update,
       );
+      if (!_routeActive) return;
+      // A receipt proves the write committed; never submit this intent again.
+      setState(() {
+        _committed = true;
+        _committedId = result.receipt.id;
+        _pendingCreate = null;
+        _saveError = !result.snapshotCurrent
+            ? 'Metadata sudah disimpan di server, tetapi data terbaru '
+                  'belum dapat dimuat. Muat ulang data, jangan simpan ulang.'
+            : store.documentById(result.receipt.id) == null
+            ? 'Metadata sudah disimpan, tetapi dokumen tidak tersedia '
+                  'pada data terbaru.'
+            : _successMessage;
+      });
+      if (result.snapshotCurrent &&
+          store.documentById(result.receipt.id) != null &&
+          _routeCurrent) {
+        if (!mounted) return;
+        Navigator.pop(context, _successMessage);
+      }
+    } on RepositoryFailure catch (error) {
+      if (!_routeActive) return;
+      setState(() {
+        if (error.writeOutcomeUnknown && _creating) {
+          _pendingCreate = item;
+          _seenPendingCreate |= store.documentById(item.id) != null;
+          _saveError =
+              'Hasil simpan belum terkonfirmasi. '
+              'Coba lagi dengan ID dan isian yang sama. '
+              '${error.issue.message}';
+        } else if (error.writeOutcomeUnknown) {
+          _needsReview = true;
+          _saveError =
+              'Hasil perubahan belum terkonfirmasi. '
+              'Muat ulang dan tinjau data terbaru sebelum mencoba lagi. '
+              '${error.issue.message}';
+        } else {
+          _needsReview =
+              error.issue == RepositoryIssue.revisionConflict ||
+              error.issue == RepositoryIssue.createConflict ||
+              error.issue == RepositoryIssue.unavailable ||
+              error.issue == RepositoryIssue.authentication;
+          _saveError = error.issue.message;
+          if (_pendingCreate != null && !_needsReview) {
+            _saveError =
+                '${error.issue.message} '
+                'Retry tetap menggunakan ID dan isian awal.';
+          }
+        }
+      });
     } on ArgumentError catch (error) {
-      setState(() => _saveError = error.message.toString());
-      return;
+      if (_routeActive) setState(() => _saveError = error.message.toString());
     } on StateError catch (error) {
-      setState(() => _saveError = error.message);
-      return;
+      if (_routeActive) setState(() => _saveError = error.message);
+    } catch (_) {
+      if (_routeActive) {
+        setState(() {
+          _needsReview = store.isConnected;
+          _saveError = RepositoryIssue.unexpected.message;
+        });
+      }
+    } finally {
+      if (_routeActive) setState(() => _saving = false);
     }
-    Navigator.pop(context, true);
   }
 }
