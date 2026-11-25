@@ -87,27 +87,32 @@ class _SheetButton extends StatelessWidget {
     this.primary = false,
   });
   final String label;
-  final VoidCallback onPressed;
+
+  /// Null renders the button disabled (e.g. while a remote write is pending).
+  final VoidCallback? onPressed;
   final bool primary;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: primary ? AppColors.primary : AppColors.primaryLight,
-    borderRadius: BorderRadius.circular(AppRadius.button),
-    child: InkWell(
+  Widget build(BuildContext context) => Opacity(
+    opacity: onPressed == null ? 0.5 : 1,
+    child: Material(
+      color: primary ? AppColors.primary : AppColors.primaryLight,
       borderRadius: BorderRadius.circular(AppRadius.button),
-      onTap: onPressed,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 50),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: _jakarta(
-            15,
-            FontWeight.w700,
-            primary ? AppColors.white : AppColors.primaryDark,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.button),
+        onTap: onPressed,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 50),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: _jakarta(
+              15,
+              FontWeight.w700,
+              primary ? AppColors.white : AppColors.primaryDark,
+            ),
           ),
         ),
       ),
@@ -343,22 +348,98 @@ class _PreviewSheet extends StatefulWidget {
 
 class _PreviewSheetState extends State<_PreviewSheet> {
   String? _error;
+  String? _notice;
+
+  /// True from opening the status picker until the write settles; blocks a
+  /// second intent before the store's own `isMutating` flag is raised.
+  bool _statusIntentOpen = false;
+
+  JobTrailStore get _store => widget.store;
+
+  /// Status writes are allowed locally (mock) or through the backend store.
+  bool get _canChangeStatus => _store.allowsLocalWrites || _store.isConnected;
+
+  bool get _statusBusy =>
+      _statusIntentOpen || _store.isMutating || _store.isRefreshing;
 
   Future<void> _changeStatus(Application app) async {
-    final status = await showModalBottomSheet<RecruitmentStatus>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _StatusPickerSheet(current: app.status),
-    );
-    if (status == null || !mounted) return;
+    if (_statusBusy) return;
+    // W13-011: capture the revision the user is looking at when the intent
+    // opens; never swap in a newer one silently.
+    final revision = _store.applicationRevision(app.id);
+    final current = app.status;
+    setState(() {
+      _statusIntentOpen = true;
+      _error = null;
+      _notice = null;
+    });
     try {
-      widget.store.changeStatus(app.id, status);
-      setState(() => _error = null);
+      final status = await showModalBottomSheet<RecruitmentStatus>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _StatusPickerSheet(current: current),
+      );
+      // Same status: nothing to write, so no duplicate history event.
+      if (!mounted || status == null || status == current) return;
+      if (_store.isConnected) {
+        await _changeStatusRemote(app.id, revision, status);
+      } else {
+        _changeStatusLocal(app.id, status);
+      }
+    } finally {
+      if (mounted) setState(() => _statusIntentOpen = false);
+    }
+  }
+
+  void _changeStatusLocal(String id, RecruitmentStatus status) {
+    try {
+      _store.changeStatus(id, status);
     } on ArgumentError catch (error) {
       setState(() => _error = '${error.message}');
     } on StateError catch (error) {
       setState(() => _error = error.message);
     }
+  }
+
+  Future<void> _changeStatusRemote(
+    String id,
+    int? revision,
+    RecruitmentStatus status,
+  ) async {
+    if (revision == null) {
+      setState(() => _error = RepositoryIssue.unavailable.message);
+      return;
+    }
+    try {
+      final result = await _store.changeStatusRemote(id, revision, status);
+      if (!mounted) return;
+      if (!result.snapshotCurrent) {
+        // Committed on the server, but the reconciling read failed.
+        setState(
+          () => _notice =
+              'Status tersimpan di server, tetapi data belum termuat ulang. '
+              'Memuat ulang…',
+        );
+        unawaited(_store.refresh());
+      }
+    } on RepositoryFailure catch (failure) {
+      if (!mounted) return;
+      setState(() => _error = _statusFailureMessage(failure));
+    }
+  }
+
+  /// Store already reconciled the snapshot for conflict/unknown outcomes, so
+  /// the sheet shows the server's current status; the user decides again.
+  static String _statusFailureMessage(RepositoryFailure failure) {
+    if (failure.writeOutcomeUnknown) {
+      return 'Perubahan status belum dapat dipastikan tersimpan. '
+          'Periksa status terbaru di atas sebelum mencoba lagi.';
+    }
+    if (failure.issue == RepositoryIssue.revisionConflict) {
+      return '${failure.issue.message} '
+          'Status di atas adalah versi terbaru dari server.';
+    }
+    return failure.issue.message;
   }
 
   @override
@@ -508,26 +589,38 @@ class _PreviewSheetState extends State<_PreviewSheet> {
             ],
           ),
           if (_error != null)
-            Text(
-              _error!,
-              key: const ValueKey('board-preview-error'),
-              style: _jakarta(
-                12,
-                FontWeight.w600,
-                RecruitmentStatus.rejected.foreground,
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _error!,
+                key: const ValueKey('board-preview-error'),
+                style: _jakarta(
+                  12,
+                  FontWeight.w600,
+                  RecruitmentStatus.rejected.foreground,
+                ),
+              ),
+            ),
+          if (_notice != null)
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _notice!,
+                key: const ValueKey('board-preview-notice'),
+                style: _jakarta(12, FontWeight.w600, AppColors.gray),
               ),
             ),
           Row(
             children: [
-              if (widget.store.allowsLocalWrites)
+              if (_canChangeStatus)
                 Expanded(
                   child: _SheetButton(
                     key: const ValueKey('board-preview-status'),
-                    label: 'Ubah Status',
-                    onPressed: () => _changeStatus(app),
+                    label: _store.isMutating ? 'Menyimpan…' : 'Ubah Status',
+                    onPressed: _statusBusy ? null : () => _changeStatus(app),
                   ),
                 ),
-              if (widget.store.allowsLocalWrites) const SizedBox(width: 10),
+              if (_canChangeStatus) const SizedBox(width: 10),
               Expanded(
                 child: _SheetButton(
                   key: const ValueKey('board-preview-detail'),
