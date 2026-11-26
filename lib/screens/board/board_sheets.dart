@@ -87,27 +87,32 @@ class _SheetButton extends StatelessWidget {
     this.primary = false,
   });
   final String label;
-  final VoidCallback onPressed;
+
+  /// Null renders the button disabled (e.g. while a remote write is pending).
+  final VoidCallback? onPressed;
   final bool primary;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: primary ? AppColors.primary : AppColors.primaryLight,
-    borderRadius: BorderRadius.circular(AppRadius.button),
-    child: InkWell(
+  Widget build(BuildContext context) => Opacity(
+    opacity: onPressed == null ? 0.5 : 1,
+    child: Material(
+      color: primary ? AppColors.primary : AppColors.primaryLight,
       borderRadius: BorderRadius.circular(AppRadius.button),
-      onTap: onPressed,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 50),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: _jakarta(
-            15,
-            FontWeight.w700,
-            primary ? AppColors.white : AppColors.primaryDark,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.button),
+        onTap: onPressed,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 50),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: _jakarta(
+              15,
+              FontWeight.w700,
+              primary ? AppColors.white : AppColors.primaryDark,
+            ),
           ),
         ),
       ),
@@ -344,21 +349,170 @@ class _PreviewSheet extends StatefulWidget {
 class _PreviewSheetState extends State<_PreviewSheet> {
   String? _error;
 
+  /// Last status-write failure, kept so its message can be recomputed once a
+  /// retry brings the snapshot back to `ready`.
+  RepositoryFailure? _failure;
+
+  /// A status write was committed, but the snapshot did not reconcile yet.
+  /// The notice text is derived from the store in [build] so it follows the
+  /// refresh as it loads, fails, or succeeds.
+  bool _committedAwaitingReload = false;
+
+  /// True from opening the status picker until the write settles; blocks a
+  /// second intent before the store's own `isMutating` flag is raised.
+  bool _statusIntentOpen = false;
+
+  JobTrailStore get _store => widget.store;
+
+  /// Status writes are allowed locally (mock) or through the backend store.
+  bool get _canChangeStatus => _store.allowsLocalWrites || _store.isConnected;
+
+  /// Backend snapshot is current enough to base a revisioned write on.
+  bool get _snapshotTrusted =>
+      !_store.isConnected ||
+      (_store.hasSnapshot && _store.phase == StorePhase.ready);
+
+  /// Any reason the status action must not start (or dispatch) right now.
+  bool get _storeBlocksStatus =>
+      _store.isMutating || _store.isRefreshing || !_snapshotTrusted;
+
+  bool get _statusBlocked => _statusIntentOpen || _storeBlocksStatus;
+
   Future<void> _changeStatus(Application app) async {
-    final status = await showModalBottomSheet<RecruitmentStatus>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _StatusPickerSheet(current: app.status),
-    );
-    if (status == null || !mounted) return;
+    if (_statusBlocked) return;
+    // W13-011: capture the revision the user is looking at when the intent
+    // opens; never swap in a newer one silently.
+    final revision = _store.applicationRevision(app.id);
+    final current = app.status;
+    setState(() {
+      _statusIntentOpen = true;
+      _error = null;
+      _failure = null;
+      _committedAwaitingReload = false;
+    });
     try {
-      widget.store.changeStatus(app.id, status);
-      setState(() => _error = null);
+      final status = await showModalBottomSheet<RecruitmentStatus>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _StatusPickerSheet(current: current),
+      );
+      // Route ownership: the preview must still be the active route (no
+      // logout, account switch, or other route on top) before dispatching.
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      // Same status: nothing to write, so no duplicate history event.
+      if (status == null || status == current) return;
+      // The store may have gone stale, failed, or started another mutation
+      // while the picker was open.
+      if (_storeBlocksStatus) {
+        setState(
+          () => _error =
+              'Data sedang dimuat atau belum terbaru. '
+              'Coba lagi setelah data termuat.',
+        );
+        return;
+      }
+      if (_store.isConnected) {
+        await _changeStatusRemote(app.id, revision, status);
+      } else {
+        _changeStatusLocal(app.id, status);
+      }
+    } finally {
+      if (mounted) setState(() => _statusIntentOpen = false);
+    }
+  }
+
+  void _changeStatusLocal(String id, RecruitmentStatus status) {
+    try {
+      _store.changeStatus(id, status);
     } on ArgumentError catch (error) {
       setState(() => _error = '${error.message}');
     } on StateError catch (error) {
       setState(() => _error = error.message);
     }
+  }
+
+  Future<void> _changeStatusRemote(
+    String id,
+    int? revision,
+    RecruitmentStatus status,
+  ) async {
+    if (revision == null) {
+      setState(() => _error = RepositoryIssue.unavailable.message);
+      return;
+    }
+    try {
+      final result = await _store.changeStatusRemote(id, revision, status);
+      if (!mounted) return;
+      if (!result.snapshotCurrent) {
+        // Committed on the server, but the reconciling read failed: reload
+        // (never write again) and let the notice follow the refresh.
+        setState(() => _committedAwaitingReload = true);
+        await _reload();
+      }
+    } on RepositoryFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        _failure = failure;
+        _error = _statusFailureMessage(failure);
+      });
+    }
+  }
+
+  /// Refresh the snapshot; clears the committed notice once it is current.
+  Future<void> _reload() async {
+    await _store.refresh();
+    if (!mounted) return;
+    if (_store.phase == StorePhase.ready) {
+      setState(() {
+        _committedAwaitingReload = false;
+        // The snapshot is current now: drop the "could not load" wording and
+        // recompute the failure message against the reconciled data.
+        final failure = _failure;
+        if (failure != null) _error = _statusFailureMessage(failure);
+      });
+    }
+  }
+
+  /// Only claim the sheet shows the server's latest data when the store's
+  /// reconciliation actually succeeded.
+  String _statusFailureMessage(RepositoryFailure failure) {
+    final reconciled = _store.phase == StorePhase.ready;
+    if (failure.writeOutcomeUnknown) {
+      return reconciled
+          ? 'Perubahan status belum dapat dipastikan tersimpan. '
+                'Periksa status terbaru di atas sebelum mencoba lagi.'
+          : 'Perubahan status belum dapat dipastikan tersimpan dan data '
+                'terbaru belum berhasil dimuat. Muat ulang sebelum mencoba lagi.';
+    }
+    if (failure.issue == RepositoryIssue.revisionConflict) {
+      return reconciled
+          ? '${failure.issue.message} '
+                'Status di atas adalah versi terbaru dari server.'
+          : 'Data telah berubah, tetapi versi terbaru belum berhasil dimuat. '
+                'Muat ulang sebelum mencoba lagi.';
+    }
+    return failure.issue.message;
+  }
+
+  /// Notice for committed-but-unreconciled writes and for a stale snapshot.
+  /// Returns null when nothing needs to be said.
+  ({String text, bool canRetry})? get _reloadNotice {
+    if (!_store.isConnected) return null;
+    if (_store.isRefreshing) {
+      return (
+        text: _committedAwaitingReload
+            ? 'Status tersimpan di server. Memuat ulang data…'
+            : 'Memuat ulang data…',
+        canRetry: false,
+      );
+    }
+    if (_store.phase != StorePhase.error) return null;
+    return (
+      text: _committedAwaitingReload
+          ? 'Status tersimpan di server, tetapi data belum termuat.'
+          : 'Data belum terbaru. Muat ulang sebelum mengubah status.',
+      canRetry: true,
+    );
   }
 
   @override
@@ -508,26 +662,50 @@ class _PreviewSheetState extends State<_PreviewSheet> {
             ],
           ),
           if (_error != null)
-            Text(
-              _error!,
-              key: const ValueKey('board-preview-error'),
-              style: _jakarta(
-                12,
-                FontWeight.w600,
-                RecruitmentStatus.rejected.foreground,
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _error!,
+                key: const ValueKey('board-preview-error'),
+                style: _jakarta(
+                  12,
+                  FontWeight.w600,
+                  RecruitmentStatus.rejected.foreground,
+                ),
               ),
+            ),
+          if (_reloadNotice case final notice?)
+            Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      notice.text,
+                      key: const ValueKey('board-preview-notice'),
+                      style: _jakarta(12, FontWeight.w600, AppColors.gray),
+                    ),
+                  ),
+                ),
+                if (notice.canRetry)
+                  TextButton(
+                    key: const ValueKey('board-preview-retry'),
+                    onPressed: _reload,
+                    child: const Text('Coba lagi'),
+                  ),
+              ],
             ),
           Row(
             children: [
-              if (widget.store.allowsLocalWrites)
+              if (_canChangeStatus)
                 Expanded(
                   child: _SheetButton(
                     key: const ValueKey('board-preview-status'),
-                    label: 'Ubah Status',
-                    onPressed: () => _changeStatus(app),
+                    label: _store.isMutating ? 'Menyimpan…' : 'Ubah Status',
+                    onPressed: _statusBlocked ? null : () => _changeStatus(app),
                   ),
                 ),
-              if (widget.store.allowsLocalWrites) const SizedBox(width: 10),
+              if (_canChangeStatus) const SizedBox(width: 10),
               Expanded(
                 child: _SheetButton(
                   key: const ValueKey('board-preview-detail'),
