@@ -206,7 +206,11 @@ void main() {
       expect(key('S05'), findsOneWidget);
       await tester.tap(key('nav-home'));
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView).first, const Offset(0, 500));
+      final homeScroll = find.descendant(
+        of: key('home-content'),
+        matching: find.byType(Scrollable),
+      );
+      tester.state<ScrollableState>(homeScroll).position.jumpTo(0);
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Notifikasi'));
       await tester.pumpAndSettle();
