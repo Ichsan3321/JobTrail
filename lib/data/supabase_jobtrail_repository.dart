@@ -173,34 +173,70 @@ class SupabaseJobTrailRepository implements JobTrailRepository {
   );
 
   @override
-  Future<AgendaReceipt> saveAgenda(Agenda agenda, SaveMode mode) =>
-      _call('save_agenda', () => JobTrailWire.agenda(agenda, mode), (raw) {
-        final row = JobTrailWire.object(raw);
-        return (
-          id: _matchingId(row['id'], agenda.id),
-          replayed: JobTrailWire.flag(row['replayed']),
-        );
-      });
+  Future<AgendaReceipt> saveAgenda(
+    Agenda agenda,
+    SaveMode mode, {
+    int? expectedRevision,
+  }) => _call(
+    'save_agenda',
+    () => _entitySaveArgs(
+      JobTrailWire.agenda(agenda, mode),
+      mode,
+      expectedRevision,
+    ),
+    (raw) {
+      final row = JobTrailWire.object(raw);
+      return (
+        id: _matchingId(row['id'], agenda.id),
+        revision: JobTrailWire.entityRevision(
+          row,
+          required: mode == SaveMode.update,
+        ),
+        replayed: JobTrailWire.flag(row['replayed']),
+      );
+    },
+  );
 
   @override
-  Future<DocumentReceipt> saveDocument(AppDocument document, SaveMode mode) =>
-      _call('save_document', () => JobTrailWire.document(document, mode), (
-        raw,
-      ) {
-        final row = JobTrailWire.object(raw);
-        return (
-          id: _matchingId(row['id'], document.id),
-          updatedAt: JobTrailWire.instant(row['updated_at']),
-          replayed: JobTrailWire.flag(row['replayed']),
-        );
-      });
+  Future<DocumentReceipt> saveDocument(
+    AppDocument document,
+    SaveMode mode, {
+    int? expectedRevision,
+  }) => _call(
+    'save_document',
+    () => _entitySaveArgs(
+      JobTrailWire.document(document, mode),
+      mode,
+      expectedRevision,
+    ),
+    (raw) {
+      final row = JobTrailWire.object(raw);
+      return (
+        id: _matchingId(row['id'], document.id),
+        revision: JobTrailWire.entityRevision(
+          row,
+          required: mode == SaveMode.update,
+        ),
+        updatedAt: JobTrailWire.instant(row['updated_at']),
+        replayed: JobTrailWire.flag(row['replayed']),
+      );
+    },
+  );
 
-  Future<String> _delete(String resource, String id, [int? revision]) => _call(
+  WireObject _entitySaveArgs(WireObject args, SaveMode mode, int? revision) {
+    if (mode == SaveMode.update) {
+      args['p_expected_revision'] = JobTrailWire.positiveInt(revision);
+    } else if (revision != null) {
+      throw const FormatException('create cannot specify a revision');
+    }
+    return args;
+  }
+
+  Future<String> _delete(String resource, String id, int revision) => _call(
     'delete_$resource',
     () => {
       'p_id': JobTrailWire.uuid(id),
-      if (revision != null)
-        'p_expected_revision': JobTrailWire.positiveInt(revision),
+      'p_expected_revision': JobTrailWire.positiveInt(revision),
     },
     (raw) => _matchingId(raw, id),
   );
@@ -209,9 +245,11 @@ class SupabaseJobTrailRepository implements JobTrailRepository {
   Future<String> deleteApplication(String id, int revision) =>
       _delete('application', id, revision);
   @override
-  Future<String> deleteAgenda(String id) => _delete('agenda', id);
+  Future<String> deleteAgenda(String id, int expectedRevision) =>
+      _delete('agenda', id, expectedRevision);
   @override
-  Future<String> deleteDocument(String id) => _delete('document', id);
+  Future<String> deleteDocument(String id, int expectedRevision) =>
+      _delete('document', id, expectedRevision);
 
   @override
   void dispose() {

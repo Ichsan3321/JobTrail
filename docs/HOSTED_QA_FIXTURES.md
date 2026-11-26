@@ -19,11 +19,11 @@ Untuk meminta izin tulis, cantumkan akun, profil, skenario modul, waktu mulai
 dan selesai, penanggung jawab cleanup, serta record tambahan yang diperlukan.
 `--execute` dipakai setelah lead menyetujui pembuatan atau pembersihan pada akun
 itu. Selama cleanup, hentikan semua aktivitas tulis pada akun tersebut,
-termasuk aplikasi atau harness di tab maupun terminal lain. Revisi melindungi
-hapus lamaran dan FK melindungi dokumen tertaut. RPC yang ada tidak menyediakan
-prasyarat atomik untuk snapshot seluruh relasi atau untuk perubahan marker
-agenda/dokumen. Pemeriksaan berulang di client tidak menghilangkan jendela
-konkurensi ini.
+  termasuk aplikasi atau harness di tab maupun terminal lain. Revisi
+  melindungi penghapusan langsung lamaran, agenda, dan dokumen. FK melindungi
+  dokumen tertaut. Pemeriksaan snapshot seluruh relasi belum atomik dengan
+  cascade lamaran. Agenda yang ditautkan bersamaan dapat ikut terhapus tanpa
+  menaikkan revisi lamaran. Penggunaan akun eksklusif tetap wajib.
 
 ## Profil dan ekspektasi
 
@@ -128,6 +128,12 @@ relevan, dan simpan manifest lengkap hanya di mesin operator. Ikuti
 
 ## Cleanup dan pemulihan
 
+Harness ini mensyaratkan `entity_revision_version: 1` dari snapshot sebelum
+create atau cleanup. Manifest v1 tetap berlaku. Simpan manifest lama dan
+verifikasi ulang sesudah migrasi. Bila backend belum mendukung revisi,
+create/cleanup berhenti sebelum mutasi. Gunakan harness baru sesudah cutover.
+Lihat [kontrak revisi entity](ENTITY_REVISION_CONTRACT.md) untuk rollout.
+
 Jalankan kembali prompt password dengan akun pemilik manifest. Tutup sesi UI
 dan proses lain akun tersebut, lalu gunakan dry-run dan izin cleanup lead.
 
@@ -148,7 +154,10 @@ try {
 - Pertahankan marker persis pada field `notes` setiap record saat melakukan
   pengujian edit. Cleanup hanya menargetkan ID dari manifest yang dibangun
   ulang dari profil dan UUID run. Ia memeriksa pemilik, marker, relasi keluar,
-  serta revisi lamaran. Urutannya agenda, lamaran, dokumen. Riwayat dan tautan
+  serta revisi ketiga jenis entity. Revisi dari preflight dipertahankan
+  sepanjang percobaan cleanup dan dikirim pada setiap delete. Jika berubah,
+  hentikan dan tinjau ulang sebelum memulai percobaan baru. Urutannya agenda,
+  lamaran, dokumen. Riwayat dan tautan
   fixture dihapus lewat cascade lamaran. Record baru dari UI di luar manifest
   membutuhkan identifikasi dan cleanup terpisah yang disetujui.
 - Timeout, pembatalan dan kegagalan transport dapat terjadi setelah server

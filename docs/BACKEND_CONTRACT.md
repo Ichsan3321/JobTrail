@@ -70,11 +70,13 @@ untuk penulisan internal. Default UI tetap mengikuti [kontrak frontend](ARCHITEC
 | `agendas.type` | text, tanpa default | `Agenda.type`, kode baku. |
 | `agendas.scheduled_at` | timestamptz, tanpa default | `scheduledAt` sebagai instant terbatas. Tanggal WIB minimal tanggal lamaran. |
 | `agendas.location_or_link, notes` | text, tanpa default dan `''` | `locationOrLink` wajib nonkosong, `notes` boleh kosong. |
+| `agendas.revision` | integer, 1 | Revisi server positif sejak migrasi `20261126000100`. |
 | `application_status_history.id, user_id, application_id` | UUID, `gen_random_uuid()` untuk ID | PK dari server, pemilik dari sesi, FK komposit ke lamaran. |
 | `application_status_history.status, changed_at, event_no` | text, timestamptz, integer, dari rutinitas penulisan | `status`, `changedAt`, dan urutan positif yang unik per lamaran. Event baru tidak mundur relatif terhadap event sebelumnya. |
 | `documents.id, user_id` | UUID, tanpa default | PK klien dan FK pemilik dari sesi. Pasangan `(user_id, id)` unik. |
 | `documents.title, file_name, version, category` | text, tanpa default | `title`, `fileName`, `version` wajib nonkosong. `category` memakai kode baku. Nama file hanya metadata. |
 | `documents.updated_at, notes` | timestamptz dari server dan text `''` | `updatedAt` sebagai instant dan `notes` opsional secara isi. |
+| `documents.revision` | integer, 1 | Revisi server positif, terpisah dari label versi berkas, sejak migrasi `20261126000100`. |
 | `application_documents.user_id, application_id, document_id` | UUID, tanpa default | PK pasangan ID dan dua FK komposit dengan pemilik yang sama. Repository membentuk kembali `Application.documentIds` dari set ini. |
 | `applications.create_fingerprint`, `agendas.create_fingerprint`, `documents.create_fingerprint` | bytea, dibuat RPC | SHA-256 payload pembuatan yang dikanonisasi. Kolom internal dan tetap setelah edit. |
 
@@ -106,14 +108,18 @@ tidak mendapat akses tabel atau RPC. Jembatan privat hanya membaca identitas
 
 | Metode repository | RPC dan input | Output |
 |---|---|---|
-| `loadSnapshot()` | `jobtrail_load_snapshot` tanpa argumen | `reference_date`, `reference_instant`, dan array `applications`, `agendas`, `history`, `documents`, `application_documents`. Field DTO memakai nama kolom publik pada kamus, tanpa `user_id` dan fingerprint. Gaji berupa string desimal atau null. |
+| `loadSnapshot()` | `jobtrail_load_snapshot` tanpa argumen | `reference_date`, `reference_instant`, dan array `applications`, `agendas`, `history`, `documents`, `application_documents`. Setelah migrasi revisi entity, snapshot menyertakan `entity_revision_version: 1` dan revisi agenda/dokumen. Field DTO tidak menyertakan `user_id` atau fingerprint. Gaji berupa string desimal atau null. |
 | `createApplication(id, draft)` | `jobtrail_create_application` dengan `p_id`, perusahaan, posisi, sumber, tanggal, status, lokasi, tipe, gaji, catatan, dan `p_document_ids` | `id`, `revision`, `replayed`. Pembuatan lamaran, tautan dan event pertama terjadi dalam satu transaksi. |
 | `updateApplication(id, revision, draft)` | `jobtrail_update_application`. Payload lengkap sama seperti create dengan `p_expected_revision`. Kirim null untuk gaji kosong dan array kosong untuk melepaskan semua dokumen. | `id`, `revision` baru. Payload, tautan, dan event status bersifat atomik. |
 | `changeStatus(id, revision, status)` | `jobtrail_change_status(p_id, p_expected_revision, p_status)` | `id`, `revision`. Status sama mempertahankan revisi dan history. |
 | `deleteApplication(id, revision)` | `jobtrail_delete_application(p_id, p_expected_revision)` | UUID yang dihapus. |
-| `saveAgenda(agenda, mode)` | `jobtrail_save_agenda(p_id, p_create, p_application_id, p_type, p_scheduled_at, p_location_or_link, p_notes)` | `id`, `replayed`. Mode edit mempertahankan ID dan hanya dapat pindah ke lamaran pemilik yang sama. |
-| `saveDocument(document, mode)` | `jobtrail_save_document(p_id, p_create, p_title, p_category, p_file_name, p_version, p_notes)` | `id`, `updated_at`, `replayed`. Timestamp dari server. |
-| `deleteAgenda(id)`, `deleteDocument(id)` | `jobtrail_delete_agenda(p_id)`, `jobtrail_delete_document(p_id)` | UUID yang dihapus. |
+| `saveAgenda(agenda, mode, expectedRevision: ...)` | `jobtrail_save_agenda(p_id, p_create, p_application_id, p_type, p_scheduled_at, p_location_or_link, p_notes, p_expected_revision)` | `id`, `replayed`, `revision`. Update wajib menyertakan revisi yang ditangkap. Create memakai argumen lama. |
+| `saveDocument(document, mode, expectedRevision: ...)` | `jobtrail_save_document(p_id, p_create, p_title, p_category, p_file_name, p_version, p_notes, p_expected_revision)` | `id`, `updated_at`, `replayed`, `revision`. Timestamp dari server. Update wajib menyertakan revisi yang ditangkap. Create memakai argumen lama. |
+| `deleteAgenda(id, expectedRevision)`, `deleteDocument(id, expectedRevision)` | `jobtrail_delete_agenda(p_id, p_expected_revision)`, `jobtrail_delete_document(p_id, p_expected_revision)` | UUID yang dihapus. |
+
+Signature baru agenda dan dokumen berlaku setelah migrasi
+`20261126000100`. Lihat [kontrak revisi entity](ENTITY_REVISION_CONTRACT.md)
+untuk kompatibilitas sebelum deploy, contoh integrasi, dan gerbang QA.
 
 Nama parameter draft RPC memakai awalan `p_` di depan nama kolom kamus.
 Store menggunakan snapshot konsisten dan mempublikasikan state setelah commit.

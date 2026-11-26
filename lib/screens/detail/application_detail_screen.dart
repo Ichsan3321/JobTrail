@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_dates.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../core/routes/app_navigation.dart';
+import '../../data/jobtrail_repository.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/agenda.dart';
 import '../../models/application.dart';
@@ -13,7 +14,7 @@ import '../../widgets/status_chip.dart';
 import '../schedule/add_agenda_sheet.dart';
 import '../documents/document_preview_sheet.dart';
 
-class ApplicationDetailScreen extends StatelessWidget {
+class ApplicationDetailScreen extends StatefulWidget {
   const ApplicationDetailScreen({
     super.key,
     required this.store,
@@ -24,6 +25,67 @@ class ApplicationDetailScreen extends StatelessWidget {
   final JobTrailStore store;
   final AppNavigation navigation;
   final String applicationId;
+
+  @override
+  State<ApplicationDetailScreen> createState() =>
+      _ApplicationDetailScreenState();
+}
+
+class _ApplicationDetailScreenState extends State<ApplicationDetailScreen> {
+  JobTrailStore get store => widget.store;
+  String get applicationId => widget.applicationId;
+
+  ModalRoute<dynamic>? _route;
+  bool _actionInProgress = false;
+  String? _confirmedDeletionId;
+  ApplicationReceipt? _statusReceiptAwaitingSnapshot;
+  RecruitmentStatus? _statusDraft;
+  String? _deferredMessage;
+
+  bool get _canMutate =>
+      !store.isMutating &&
+      !store.isRefreshing &&
+      (store.phase == StorePhase.ready || store.phase == StorePhase.empty);
+
+  // The protected navigator and store are replaced together on account change.
+  bool _ownsSession(JobTrailStore actionStore) =>
+      mounted && identical(store, actionStore);
+
+  bool _ownsRoute(JobTrailStore actionStore, String id) =>
+      _ownsSession(actionStore) &&
+      applicationId == id &&
+      _route?.isActive == true;
+
+  bool get _isVisible => _route?.isCurrent == true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    if (!_isVisible ||
+        (_deferredMessage == null && _confirmedDeletionId == null)) {
+      return;
+    }
+    final actionStore = store;
+    final id = applicationId;
+    // Route changes are reported during build. Defer UI effects until the frame
+    // ends and check ownership again in case the route changed meanwhile.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_ownsRoute(actionStore, id) || !_isVisible) return;
+      if (_deferredMessage case final message?) _showMessage(message);
+      _finishDeletion();
+    });
+  }
+
+  Future<void> _runAction(Future<void> Function() action) async {
+    if (_actionInProgress || !_canMutate) return;
+    setState(() => _actionInProgress = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _actionInProgress = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -38,8 +100,28 @@ class ApplicationDetailScreen extends StatelessWidget {
               _DetailHeader(
                 onEdit: application == null || !store.allowsLocalWrites
                     ? null
-                    : () => navigation.openEdit(applicationId),
+                    : () => widget.navigation.openEdit(applicationId),
               ),
+              if (store.phase == StorePhase.error)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          store.failure?.issue.message ??
+                              RepositoryIssue.unexpected.message,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: store.isRefreshing || _actionInProgress
+                            ? null
+                            : _refreshSnapshot,
+                        child: const Text('Muat ulang'),
+                      ),
+                    ],
+                  ),
+                ),
               Expanded(
                 child: application == null
                     ? const EmptyState(
@@ -50,43 +132,75 @@ class ApplicationDetailScreen extends StatelessWidget {
             ],
           ),
         ),
-        bottomNavigationBar: application == null || !store.allowsLocalWrites
+        bottomNavigationBar: application == null
             ? null
             : _DetailActions(
-                onChangeStatus: () => _changeStatus(context, application),
-                onDelete: () => _deleteApplication(context, application),
+                onChangeStatus: _actionInProgress || !_canMutate
+                    ? null
+                    : () => _runAction(() => _changeStatus(application)),
+                onDelete: _actionInProgress || !_canMutate
+                    ? null
+                    : () => _runAction(() => _deleteApplication(application)),
               ),
       );
     },
   );
 
-  Future<void> _changeStatus(
-    BuildContext context,
-    Application application,
-  ) async {
+  Future<void> _changeStatus(Application application) async {
+    final actionStore = store;
+    final id = application.id;
+    final revision = actionStore.applicationRevision(id);
     final status = await showModalBottomSheet<RecruitmentStatus>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: AppColors.white,
       barrierColor: AppColors.navy.withValues(alpha: .65),
-      builder: (_) => _StatusSheet(application: application),
+      builder: (_) => _StatusSheet(
+        application: application,
+        initialStatus: _statusDraft ?? application.status,
+      ),
     );
-    if (!context.mounted || status == null) return;
+    if (!_ownsRoute(actionStore, id) || !_isVisible) return;
+    _statusDraft = null;
+    if (status == null) return;
 
+    const failureMessage = 'Status gagal diubah.';
+    if (!_canSubmit(actionStore, id, revision, failureMessage)) return;
     try {
-      store.changeStatus(application.id, status);
-    } on ArgumentError catch (error) {
-      _showError(context, 'Status gagal diubah. ${error.message}');
+      if (revision == null) {
+        actionStore.changeStatus(id, status);
+        return;
+      }
+      final result = await actionStore.changeStatusRemote(id, revision, status);
+      if (!_ownsRoute(actionStore, result.receipt.id)) return;
+      if (!result.snapshotCurrent) {
+        _statusReceiptAwaitingSnapshot = result.receipt;
+        await _refreshSnapshot();
+      }
+    } on RepositoryFailure catch (failure) {
+      await _handleRemoteFailure(
+        actionStore,
+        id,
+        failure,
+        failureMessage,
+        attemptedStatus: status,
+      );
+    } on ArgumentError {
+      if (_ownsRoute(actionStore, id)) {
+        _showMessage('$failureMessage ${RepositoryIssue.validation.message}');
+      }
     } on StateError catch (error) {
-      _showError(context, 'Status gagal diubah. ${error.message}');
+      if (_ownsRoute(actionStore, id)) {
+        _showMessage('$failureMessage ${error.message}');
+      }
     }
   }
 
-  Future<void> _deleteApplication(
-    BuildContext context,
-    Application application,
-  ) async {
+  Future<void> _deleteApplication(Application application) async {
+    final actionStore = store;
+    final id = application.id;
+    final revision = actionStore.applicationRevision(id);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -120,20 +234,126 @@ class ApplicationDetailScreen extends StatelessWidget {
         ],
       ),
     );
-    if (!context.mounted || confirmed != true) return;
-
-    try {
-      store.deleteApplication(application.id);
-    } on StateError catch (error) {
-      _showError(context, 'Lamaran gagal dihapus. ${error.message}');
+    if (!_ownsRoute(actionStore, id) || !_isVisible || confirmed != true) {
       return;
     }
-    navigation.showTab(AppTab.board);
+
+    const failureMessage = 'Lamaran gagal dihapus.';
+    if (!_canSubmit(actionStore, id, revision, failureMessage)) return;
+    try {
+      if (revision == null) {
+        actionStore.deleteApplication(id);
+        widget.navigation.showTab(AppTab.board);
+        return;
+      }
+      final result = await actionStore.deleteApplicationRemote(id, revision);
+      if (!_ownsRoute(actionStore, result.receipt)) return;
+      _confirmedDeletionId = result.receipt;
+      if (result.snapshotCurrent) {
+        _finishDeletion();
+      } else {
+        await _refreshSnapshot();
+      }
+    } on RepositoryFailure catch (failure) {
+      await _handleRemoteFailure(actionStore, id, failure, failureMessage);
+    } on StateError catch (error) {
+      if (_ownsRoute(actionStore, id)) {
+        _showMessage('$failureMessage ${error.message}');
+      }
+    }
   }
 
-  void _showError(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  bool _canSubmit(
+    JobTrailStore actionStore,
+    String id,
+    int? revision,
+    String failureMessage,
+  ) {
+    if (actionStore.applicationById(id) == null ||
+        (actionStore.isConnected && revision == null)) {
+      _showMessage('$failureMessage ${RepositoryIssue.unavailable.message}');
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _handleRemoteFailure(
+    JobTrailStore actionStore,
+    String id,
+    RepositoryFailure failure,
+    String failureMessage, {
+    RecruitmentStatus? attemptedStatus,
+  }) async {
+    if (!_ownsRoute(actionStore, id) ||
+        failure.issue == RepositoryIssue.authentication) {
+      return;
+    }
+    if (failure.writeOutcomeUnknown) {
+      _showMessage(
+        'Hasil perubahan belum dapat dipastikan. Periksa data terbaru.',
+      );
+      // The store already attempted reconciliation before returning this failure.
+      if (actionStore.phase == StorePhase.error) await _refreshSnapshot();
+    } else if (failure.issue == RepositoryIssue.revisionConflict) {
+      if (attemptedStatus != null) _statusDraft = attemptedStatus;
+      final action = attemptedStatus == null
+          ? 'menghapus lamaran'
+          : 'memilih status ${attemptedStatus.label}';
+      _showMessage(
+        'Data lamaran telah berubah. Tinjau data terbaru sebelum $action.',
+      );
+    } else {
+      _showMessage('$failureMessage ${failure.issue.message}');
+    }
+  }
+
+  Future<void> _refreshSnapshot() async {
+    final actionStore = store;
+    final id = applicationId;
+    if (!_ownsRoute(actionStore, id)) return;
+    await actionStore.refresh();
+    if (!_ownsRoute(actionStore, id)) return;
+    if (actionStore.phase == StorePhase.error) {
+      if (_statusReceiptAwaitingSnapshot?.id == id) {
+        _showMessage(
+          'Perubahan status diterima server. Data terbaru belum tersedia.',
+        );
+      } else if (_confirmedDeletionId == id) {
+        _showMessage(
+          'Penghapusan diterima server. Data terbaru belum tersedia.',
+        );
+      }
+      return;
+    }
+    if (_statusReceiptAwaitingSnapshot?.id == id) {
+      _statusReceiptAwaitingSnapshot = null;
+      _showMessage(
+        'Perubahan status diterima server. Data telah dimuat ulang.',
+      );
+    }
+    _finishDeletion();
+  }
+
+  void _finishDeletion() {
+    if (!_isVisible || _confirmedDeletionId != applicationId || !_canMutate) {
+      return;
+    }
+    _confirmedDeletionId = null;
+    if (store.applicationById(applicationId) == null) {
+      widget.navigation.showTab(AppTab.board);
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!_isVisible) {
+      _deferredMessage = message;
+      return;
+    }
+    _deferredMessage = null;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget _buildDetails(BuildContext context, Application application) {
@@ -161,11 +381,15 @@ class ApplicationDetailScreen extends StatelessWidget {
                   initialApplicationId: applicationId,
                 )
               : null,
-          onOpen: () =>
-              navigation.showTab(AppTab.schedule, applicationId: applicationId),
+          onOpen: () => widget.navigation.showTab(
+            AppTab.schedule,
+            applicationId: applicationId,
+          ),
         ),
         const SizedBox(height: AppSpacing.sm),
         _StatusTimeline(
+          // The wire decoder orders server events by event_no. historyFor
+          // preserves that order for equal timestamps.
           history: store.historyFor(applicationId),
           currentStatus: application.status,
         ),
@@ -766,28 +990,11 @@ class _DottedStatusChip extends StatelessWidget {
   );
 }
 
-class _DetailActions extends StatefulWidget {
+class _DetailActions extends StatelessWidget {
   const _DetailActions({required this.onChangeStatus, required this.onDelete});
 
-  final Future<void> Function() onChangeStatus;
-  final Future<void> Function() onDelete;
-
-  @override
-  State<_DetailActions> createState() => _DetailActionsState();
-}
-
-class _DetailActionsState extends State<_DetailActions> {
-  bool _actionInProgress = false;
-
-  Future<void> _runAction(Future<void> Function() action) async {
-    if (_actionInProgress) return;
-    _actionInProgress = true;
-    try {
-      await action();
-    } finally {
-      _actionInProgress = false;
-    }
-  }
+  final VoidCallback? onChangeStatus;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -809,7 +1016,7 @@ class _DetailActionsState extends State<_DetailActions> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             FilledButton.icon(
-              onPressed: () => _runAction(widget.onChangeStatus),
+              onPressed: onChangeStatus,
               iconAlignment: IconAlignment.end,
               icon: const Icon(Icons.expand_more_rounded, size: 18),
               label: const Text('Ubah Status'),
@@ -818,7 +1025,7 @@ class _DetailActionsState extends State<_DetailActions> {
               style: TextButton.styleFrom(
                 foregroundColor: RecruitmentStatus.rejected.foreground,
               ),
-              onPressed: () => _runAction(widget.onDelete),
+              onPressed: onDelete,
               icon: const Icon(Icons.delete_outline_rounded, size: 18),
               label: const Text('Hapus Lamaran'),
             ),
@@ -830,16 +1037,17 @@ class _DetailActionsState extends State<_DetailActions> {
 }
 
 class _StatusSheet extends StatefulWidget {
-  const _StatusSheet({required this.application});
+  const _StatusSheet({required this.application, required this.initialStatus});
 
   final Application application;
+  final RecruitmentStatus initialStatus;
 
   @override
   State<_StatusSheet> createState() => _StatusSheetState();
 }
 
 class _StatusSheetState extends State<_StatusSheet> {
-  late RecruitmentStatus _selected = widget.application.status;
+  late RecruitmentStatus _selected = widget.initialStatus;
 
   static const _descriptions = {
     RecruitmentStatus.applied: 'Sudah dikirim, belum ada respons',
