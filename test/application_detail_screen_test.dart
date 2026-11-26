@@ -381,8 +381,18 @@ void main() {
     tester,
   ) async {
     final navigation = await mountApp(tester, JobTrailStore.demo());
-    await tester.scrollUntilVisible(find.text('Lentera Tech'), 160);
-    await tester.tap(find.text('Lentera Tech'));
+    final homeApplication = find.text('Lentera Tech');
+    await tester.scrollUntilVisible(
+      homeApplication,
+      160,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('home-content')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.ensureVisible(homeApplication);
+    await tester.pumpAndSettle();
+    await tester.tap(homeApplication);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('S03')), findsOneWidget);
     await tester.pageBack();
