@@ -1,4 +1,4 @@
-enum AuthCallback { confirmation, recovery }
+enum AuthCallback { confirmation, recovery, google }
 
 class AuthConfiguration {
   AuthConfiguration({
@@ -6,6 +6,7 @@ class AuthConfiguration {
     required String projectUrl,
     required this.publishableKey,
     required String webOrigin,
+    this.googleOAuthEnabled = false,
   }) : isMock = mode == 'mock',
        project = Uri.tryParse(projectUrl),
        web = Uri.tryParse(webOrigin) {
@@ -57,12 +58,16 @@ class AuthConfiguration {
       'JOBTRAIL_WEB_ORIGIN',
       defaultValue: 'http://localhost:3000',
     ),
+    googleOAuthEnabled: const bool.fromEnvironment(
+      'JOBTRAIL_GOOGLE_OAUTH_ENABLED',
+    ),
   );
 
   final bool isMock;
   final Uri? project;
   final Uri? web;
   final String publishableKey;
+  final bool googleOAuthEnabled;
 
   static const _androidScheme = 'com.example.jobtrail';
 
@@ -76,15 +81,32 @@ class AuthConfiguration {
       (uri.path.isEmpty || uri.path == '/');
 
   Uri redirect(AuthCallback flow, {required bool onWeb}) {
-    final name = flow == AuthCallback.recovery ? 'recovery' : 'confirm';
+    final name = switch (flow) {
+      AuthCallback.confirmation => 'confirm',
+      AuthCallback.recovery => 'recovery',
+      AuthCallback.google => 'google',
+    };
     return onWeb
         ? web!.replace(path: '/', queryParameters: {'auth': name})
         : Uri(scheme: _androidScheme, host: 'auth', path: '/$name');
   }
 
+  bool allowsGoogleOAuth(Uri uri, {required bool onWeb}) {
+    if (!onWeb || isMock || !googleOAuthEnabled) return false;
+    final site = web!;
+    return uri.userInfo.isEmpty &&
+        uri.scheme == site.scheme &&
+        uri.host == site.host &&
+        uri.port == site.port;
+  }
+
   AuthCallback? callback(Uri uri, {required bool onWeb}) {
-    if (uri.userInfo.isNotEmpty) return null;
+    if (isMock || uri.userInfo.isNotEmpty) return null;
     for (final flow in AuthCallback.values) {
+      if (flow == AuthCallback.google &&
+          !allowsGoogleOAuth(uri, onWeb: onWeb)) {
+        continue;
+      }
       final expected = redirect(flow, onWeb: onWeb);
       if (uri.scheme == expected.scheme &&
           uri.host == expected.host &&

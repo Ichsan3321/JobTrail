@@ -18,7 +18,8 @@ flutter run -d ANDROID_DEVICE_ID --dart-define-from-file=.env.jobtrail.json
 Keep `JOBTRAIL_WEB_ORIGIN` aligned with the exact browser origin. The real
 configuration accepts Supabase HTTPS project URLs and `sb_publishable_` keys.
 A compiled Flutter build can expose its Dart defines, so include public
-configuration only. For a local UI demo without Supabase use
+configuration only. `JOBTRAIL_GOOGLE_OAUTH_ENABLED` defaults to `false`.
+For a local UI demo without Supabase use
 `flutter run -d chrome --web-hostname=localhost --web-port=3000 --dart-define=JOBTRAIL_AUTH_MODE=mock`.
 Only debug mock mode offers the labeled demo Home and preview actions.
 If Windows desktop plugin symlinks block SDK commands on a machine targeting
@@ -27,9 +28,10 @@ only Web or Android, set `$env:FLUTTER_WINDOWS = 'false'` in that PowerShell ses
 ## Required dashboard settings
 
 The project owner configures **Authentication → URL Configuration** manually.
-Keep existing approved origins and email settings intact. For the development
-setup above, set **Site URL** to `http://localhost:3000` and add these exact
-redirect URLs.
+`http://localhost:3000` is the documented local development Site URL. Keep the
+project's existing approved Site URL, origins, and email settings when adding
+Google. The app passes its own explicit return URL. The exact development
+confirmation and recovery entries are below.
 
 | Platform | Confirmation | Recovery |
 |---|---|---|
@@ -44,6 +46,77 @@ messages per hour. Report email-dependent tests as blocked when eligible
 delivery is unavailable. [Supabase redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
 · [Supabase SMTP limits](https://supabase.com/docs/guides/auth/auth-smtp)
 
+## Google OAuth setup for the project lead
+
+1. In Google Cloud Console, select the team-owned JobTrail development project
+   or create one under the team's approved account. Open **Google Auth Platform**
+   and select **Get started** if this is the first setup. In **Branding**, set
+   the app name to `JobTrail`, choose a team-controlled support email, and enter
+   a developer contact email. Use the official JobTrail logo if branding uses
+   one. Use team-owned URLs if the console requires app links. [Google Auth Platform setup](https://support.google.com/cloud/answer/15544987?hl=en) · [Branding](https://support.google.com/cloud/answer/15549049?hl=en)
+2. Choose **External** under **Audience**, keep publishing status at **Testing**,
+   and record the lead-approved QA account. Add it under **Test users** if needed.
+   Google documents an exception to test-list enforcement for basic identity
+   scopes, so use the approved account for QA regardless of that list. In
+   **Data Access**, allow only `openid`, `userinfo.email`, and `userinfo.profile`.
+   Supabase requests `email` and `profile` by default, and JobTrail adds `openid`.
+   [Google audience rules](https://support.google.com/cloud/answer/15549945?hl=en) · [Supabase Google scopes](https://supabase.com/docs/guides/auth/social-sign-in/auth-google)
+3. Open **Clients → Create client**, select **Web application**, and name it
+   `JobTrail Web (Development)`. Add `http://localhost:3000` under **Authorized
+   JavaScript origins**. Add `https://ehzdmsdhdlqmicmwbnwh.supabase.co/auth/v1/callback`
+   under **Authorized redirect URIs** and create the client. [Google Web OAuth client setup](https://developers.google.com/identity/protocols/oauth2/web-server) · [Supabase Google setup](https://supabase.com/docs/guides/auth/social-sign-in/auth-google)
+4. In the Supabase Dashboard for project `ehzdmsdhdlqmicmwbnwh`, open
+   **Authentication → Sign In / Providers → Google**. Compare the displayed
+   callback with the URI in step 3, enable Google, enter the Web Client ID and
+   Client Secret, and save. Enter the Client Secret only in the Supabase Google
+   provider configuration. Keep the defaults for nonce and email verification.
+   Keep the existing project signup policy. A first-time Google sign-in may
+   create an Auth user if signups are permitted. [Supabase Google provider setup](https://supabase.com/docs/guides/auth/social-sign-in/auth-google)
+5. Under **Authentication → URL Configuration → Redirect URLs**, add exactly
+   `http://localhost:3000/?auth=google`. Verify that the existing email
+   confirmation and recovery URLs above remain present and that the Site URL
+   retains its approved value. The Google callback in step 3 belongs in Google
+   Cloud, and the localhost callback belongs in the Supabase allowlist.
+   `127.0.0.1` and other ports are different origins. [Supabase redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
+6. After configuration, set `"JOBTRAIL_GOOGLE_OAUTH_ENABLED": true` and
+   `"JOBTRAIL_WEB_ORIGIN": "http://localhost:3000"` in the ignored local
+   `.env.jobtrail.json`. Restart Flutter with the Web command above. The action
+   is available only in Supabase mode on Web when the browser origin matches.
+
+### Hosted Google QA
+
+Run after the lead approves the Google test account and any hosted Auth user
+creation. Use Chrome on `http://localhost:3000` in one browser profile for the
+entire PKCE flow.
+
+1. Start signed out, click **Lanjutkan dengan Google**, and verify the account
+   chooser and basic identity permissions on Google's consent screen when shown.
+   Cancel once and verify that Login can start again. Closing the tab or using
+   browser Back may yield no callback. Reopen the localhost app in that case.
+2. Sign in with the approved account. Verify the return to localhost, the clean
+   URL after callback handling, and an authenticated Supabase session by checking
+   the expected account identity and a loaded dashboard. For a new account,
+   verify the empty snapshot. Record outcomes without copying any session data.
+3. Reload and verify the same account and snapshot. Open the profile sheet and
+   confirm **Keluar**. Verify that Login returns and browser Back or reload
+   cannot restore the signed-out dashboard.
+4. Sign in as a second approved account with a distinct email address. An
+   existing approved email/password account can serve as that second account.
+   Compare identities and existing data or empty states, and verify that the
+   previous account's data is absent. Use the fake-repository tests for
+   distinguishable snapshot markers when both hosted accounts are empty.
+
+### Android follow-up
+
+The Android manifest registers `com.example.jobtrail://auth/confirm` and
+`com.example.jobtrail://auth/recovery` through `app_links`. Google remains gated
+to Web. Before enabling Android, choose and register a dedicated callback such
+as `com.example.jobtrail://auth/google` in the manifest and Supabase allowlist,
+extend the platform gate, and validate PKCE return from an external browser both
+when the app is running and after a cold start. Review verified Android App Links
+before a production rollout. The Supabase-mediated browser flow still returns
+from Google through the project's HTTPS callback. [Supabase Android deep linking](https://supabase.com/docs/guides/auth/native-mobile-deep-linking?os=android&platform=flutter&queryGroups=os&queryGroups=platform)
+
 ## Session lifecycle and repository handoff
 
 `SupabaseAuthProvider` extends the existing injectable boundary. The SDK
@@ -57,8 +130,11 @@ previous store, including any protected routes and modal overlays.
 The adapter accepts only the configured callback origins and exchanges codes
 using PKCE. The request and callback must share the same browser profile or
 Android app installation. On Web, callback parameters are removed from browser
-history. Recovery purpose is checked against the exchange response and persisted
-against the Auth session ID, so a reload or refresh leads back to password reset.
+history. The same-tab Google launch requests an account chooser. Its result
+enters through the shared session controller and only opens the dashboard after
+the SDK establishes a session. Recovery purpose is checked against the exchange
+response and persisted against the Auth session ID, so a reload or refresh leads
+back to password reset.
 A successful reset signs out before returning to Login. Cancel also signs out.
 An invalid or interrupted callback stays outside the protected app. The SDK
 uses browser storage on Web and SharedPreferences on Android.
@@ -78,8 +154,9 @@ Mutations stay gated in the UI pending screen integration.
 Use designated disposable accounts on the JobTrail development project. Repeat
 the applicable steps in Chrome and on Android using the commands above.
 
-1. Start without a local session. Check Splash V2, Login, and the disabled
-   Google action. Try an incorrect password, then sign in with an existing
+1. With Google kept off for this regression, start without a local session.
+   Check Splash V2, Login, and the disabled Google action. Try an incorrect
+   password, then sign in with an existing
    confirmed account. Check snapshot loading, the five tabs, and read-only controls.
    Use only designated test records already present in the account.
 2. Refresh Chrome or close and reopen Android, and check snapshot restoration.

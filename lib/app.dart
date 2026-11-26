@@ -193,9 +193,10 @@ class _SessionAppState extends State<_SessionApp> {
                       ],
                     ),
                     _ => AuthScreen(
-                      key: ValueKey((state.phase, state.userId)),
+                      key: ValueKey((state.phase, state.userId, state.issue)),
                       provider: widget.provider,
                       onEnter: () {},
+                      initialIssue: state.issue,
                       cancelRecovery: state.phase == AuthPhase.recovery
                           ? _controller.signOut
                           : null,

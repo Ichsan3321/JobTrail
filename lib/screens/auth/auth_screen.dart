@@ -138,10 +138,12 @@ class AuthScreen extends StatefulWidget {
     required this.provider,
     required this.onEnter,
     this.cancelRecovery,
+    this.initialIssue,
   });
   final AuthProvider provider;
   final VoidCallback onEnter;
   final VoidCallback? cancelRecovery;
+  final AuthIssue? initialIssue;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -155,10 +157,19 @@ class _AuthScreenState extends State<AuthScreen> {
       _email = TextEditingController(),
       _password = TextEditingController(),
       _confirm = TextEditingController();
-  bool _visible = false, _confirmVisible = false, _busy = false;
+  bool _visible = false, _confirmVisible = false, _submitting = false;
+  bool _launchingGoogle = false;
+  bool get _busy => _submitting || _launchingGoogle;
   String? _error;
+  late AuthIssue? _googleIssue = widget.initialIssue;
   bool _preview = false;
   bool get _live => widget.provider is SessionAuthProvider;
+  GoogleOAuthProvider? get _googleProvider {
+    final provider = widget.provider;
+    return provider is GoogleOAuthProvider && provider.canSignInWithGoogle
+        ? provider
+        : null;
+  }
 
   Future<T> _request<T>(Future<T> request) =>
       _live ? request : request.timeout(const Duration(seconds: 10));
@@ -186,6 +197,7 @@ class _AuthScreenState extends State<AuthScreen> {
       _form = GlobalKey<FormState>();
       _page = page;
       _error = null;
+      _googleIssue = null;
       _preview = preview;
       _password.clear();
       _confirm.clear();
@@ -194,11 +206,36 @@ class _AuthScreenState extends State<AuthScreen> {
     });
   }
 
+  Future<void> _signInWithGoogle() async {
+    final provider = _googleProvider;
+    if (_busy || provider == null) return;
+    setState(() {
+      _launchingGoogle = true;
+      _error = null;
+      _googleIssue = null;
+    });
+    FocusScope.of(context).unfocus();
+    try {
+      await provider.signInWithGoogle();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _googleIssue = error is AuthIssue && error != AuthIssue.unexpected
+              ? error
+              : AuthIssue.googleFailed;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _launchingGoogle = false);
+    }
+  }
+
   Future<void> _submit() async {
     if (_busy || !(_form.currentState?.validate() ?? false)) return;
     setState(() {
-      _busy = true;
+      _submitting = true;
       _error = null;
+      _googleIssue = null;
     });
     FocusScope.of(context).unfocus();
     final page = _page;
@@ -253,7 +290,7 @@ class _AuthScreenState extends State<AuthScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -371,6 +408,8 @@ class _AuthScreenState extends State<AuthScreen> {
   );
   @override
   Widget build(BuildContext context) {
+    final googleAvailable = _googleProvider != null;
+    final feedback = _error ?? _googleIssue?.message;
     final register = _page == AuthPage.register;
     final recovery =
         _page == AuthPage.forgot ||
@@ -523,10 +562,13 @@ class _AuthScreenState extends State<AuthScreen> {
                           child: const Text('Lupa password?'),
                         ),
                       ),
-                    if (_error != null)
+                    if (feedback != null)
                       Semantics(
                         liveRegion: true,
-                        child: _notice(_error!, error: true),
+                        child: _notice(
+                          feedback,
+                          error: _googleIssue != AuthIssue.googleCancelled,
+                        ),
                       ),
                     const SizedBox(height: 16),
                     FilledButton(
@@ -534,7 +576,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(48, 50),
                       ),
-                      child: _busy
+                      child: _submitting
                           ? Semantics(
                               label: 'Memproses permintaan',
                               liveRegion: true,
@@ -555,9 +597,20 @@ class _AuthScreenState extends State<AuthScreen> {
                           child: Text('atau', style: AppTypography.label),
                         ),
                       ),
-                      const OutlinedButton(
-                        onPressed: null,
-                        child: Text('Google Sign-In belum tersedia'),
+                      OutlinedButton(
+                        onPressed: googleAvailable && !_busy
+                            ? _signInWithGoogle
+                            : null,
+                        child: _launchingGoogle
+                            ? Semantics(
+                                liveRegion: true,
+                                child: const Text('Membuka Google…'),
+                              )
+                            : Text(
+                                googleAvailable
+                                    ? 'Lanjutkan dengan Google'
+                                    : 'Google Sign-In belum tersedia',
+                              ),
                       ),
                       TextButton(
                         onPressed: _busy
