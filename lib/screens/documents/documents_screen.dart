@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_tokens.dart';
@@ -17,9 +18,22 @@ bool _canSaveDocuments(JobTrailStore store) =>
         (store.phase == StorePhase.ready || store.phase == StorePhase.empty));
 
 class DocumentsScreen extends StatefulWidget {
-  const DocumentsScreen({super.key, required this.store});
+  const DocumentsScreen({super.key, required this.store})
+    : _exerciseDeferredMutations = false;
+
+  /// Exercises the retained edit/delete implementation with a fake repository.
+  /// No application route uses this constructor; release/profile stay gated.
+  @visibleForTesting
+  const DocumentsScreen.deferredMutationsForTesting({
+    super.key,
+    required this.store,
+  }) : _exerciseDeferredMutations = true;
 
   final JobTrailStore store;
+  final bool _exerciseDeferredMutations;
+
+  bool get _allowConnectedEditDelete =>
+      kDebugMode && _exerciseDeferredMutations;
 
   @override
   State<DocumentsScreen> createState() => _DocumentsScreenState();
@@ -35,6 +49,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   JobTrailStore get store => widget.store;
   bool get _canWriteDocuments =>
       !_deleteBusy && _deleteRecovery == null && _canSaveDocuments(store);
+
+  // Connected edit/delete require an atomic server-side revision precondition.
+  // A snapshot comparison alone cannot prevent cross-session lost updates.
+  bool get _canEditDelete =>
+      _canWriteDocuments &&
+      (store.allowsLocalWrites || widget._allowConnectedEditDelete);
 
   @override
   void didUpdateWidget(covariant DocumentsScreen oldWidget) {
@@ -79,6 +99,14 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
         children: [
           _buildHeader(total),
+          if (store.isConnected && !widget._allowConnectedEditDelete)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Edit dan hapus metadata server belum tersedia.',
+                style: TextStyle(fontSize: 11, color: AppColors.gray),
+              ),
+            ),
           if (_deleteRecovery != null) _buildDeleteRecovery(),
           const SizedBox(height: 18),
           _buildSearchField(),
@@ -94,8 +122,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               _DocumentCard(
                 key: ValueKey('document-card-${document.id}'),
                 document: document,
-                allowWrites: _canWriteDocuments,
-                allowEdits: _canWriteDocuments,
+                allowWrites: _canEditDelete,
+                allowEdits: _canEditDelete,
                 onTap: () => _showPreview(document),
                 onAction: (action) => _handleAction(action, document),
               ),
@@ -327,7 +355,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
   Future<void> _openDocumentForm([AppDocument? existing]) async {
     final activeStore = store;
-    if (!_canWriteDocuments) return;
+    if (!_canWriteDocuments || (existing != null && !_canEditDelete)) return;
     final current = existing == null
         ? null
         : activeStore.documentById(existing.id);
@@ -347,21 +375,19 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (context) =>
-          _DocumentFormSheet(document: current, store: activeStore),
+      builder: (context) => _DocumentFormSheet(
+        document: current,
+        store: activeStore,
+        allowConnectedEditDelete: widget._allowConnectedEditDelete,
+        onLateResult: (message) => _showMutationResult(activeStore, message),
+      ),
     );
-    if (!mounted ||
-        !identical(store, activeStore) ||
-        ModalRoute.of(context)?.isCurrent != true ||
-        message == null) {
-      return;
-    }
-    _showMessage(message);
+    if (message != null) _showMutationResult(activeStore, message);
   }
 
   Future<void> _confirmDelete(AppDocument document) async {
     final activeStore = store;
-    if (!_canWriteDocuments) return;
+    if (!_canEditDelete) return;
     final current = activeStore.documentById(document.id);
     if (current == null) {
       _showMessage(RepositoryIssue.unavailable.message);
@@ -413,7 +439,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         !identical(store, activeStore) ||
         ModalRoute.of(context)?.isCurrent != true ||
         confirmed != true ||
-        !_canWriteDocuments) {
+        !_canEditDelete) {
       return;
     }
     if (activeStore.documentById(document.id) == null) {
@@ -431,7 +457,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     try {
       if (!activeStore.isConnected) {
         activeStore.deleteDocument(document.id);
-        _showDeleteResult(activeStore, 'Metadata dokumen dihapus.');
+        _showMutationResult(activeStore, 'Metadata dokumen dihapus.');
         return;
       }
       final result = await activeStore.deleteDocumentRemote(document.id);
@@ -441,28 +467,28 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         setState(() {
           _deleteRecovery = (id: result.receipt, committed: true);
         });
-        _showDeleteResult(
+        _showMutationResult(
           activeStore,
           'Penghapusan dikonfirmasi server. Muat ulang daftar dokumen.',
         );
         return;
       }
-      _showDeleteResult(activeStore, 'Metadata dokumen dihapus.');
+      _showMutationResult(activeStore, 'Metadata dokumen dihapus.');
     } on RepositoryFailure catch (failure) {
       if (!mounted || !identical(store, activeStore)) return;
       if (failure.writeOutcomeUnknown) {
         setState(() {
           _deleteRecovery = (id: document.id, committed: false);
         });
-        _showDeleteResult(
+        _showMutationResult(
           activeStore,
           'Hasil hapus belum terkonfirmasi. Muat ulang sebelum mencoba lagi.',
         );
       } else {
-        _showDeleteResult(activeStore, failure.issue.message);
+        _showMutationResult(activeStore, failure.issue.message);
       }
     } on StateError catch (error) {
-      _showDeleteResult(activeStore, error.message);
+      _showMutationResult(activeStore, error.message);
     } catch (_) {
       if (!mounted || !identical(store, activeStore)) return;
       if (activeStore.isConnected) {
@@ -470,7 +496,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           _deleteRecovery = (id: document.id, committed: false);
         });
       }
-      _showDeleteResult(activeStore, RepositoryIssue.unexpected.message);
+      _showMutationResult(activeStore, RepositoryIssue.unexpected.message);
     } finally {
       if (mounted && identical(store, activeStore)) {
         setState(() => _deleteBusy = false);
@@ -516,7 +542,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       await activeStore.refresh();
       if (!mounted || !identical(store, activeStore)) return;
       if (!_canSaveDocuments(activeStore)) {
-        _showDeleteResult(
+        _showMutationResult(
           activeStore,
           activeStore.failure?.issue.message ?? RepositoryIssue.busy.message,
         );
@@ -524,7 +550,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       }
       final stillPresent = activeStore.documentById(recovery.id) != null;
       setState(() => _deleteRecovery = null);
-      _showDeleteResult(
+      _showMutationResult(
         activeStore,
         stillPresent
             ? (recovery.committed
@@ -541,10 +567,13 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     }
   }
 
-  void _showDeleteResult(JobTrailStore activeStore, String message) {
+  void _showMutationResult(JobTrailStore activeStore, String message) {
+    // The shell's ScaffoldMessenger belongs to the account, not to a tab.
+    // A tab switch must not lose a result or pop the destination route.
     if (!mounted ||
         !identical(store, activeStore) ||
-        ModalRoute.of(context)?.isCurrent != true) {
+        (activeStore.isConnected && !activeStore.hasSnapshot) ||
+        ModalRoute.of(context)?.isActive != true) {
       return;
     }
     _showMessage(message);
@@ -797,10 +826,17 @@ class _DocumentCard extends StatelessWidget {
 enum _DocumentAction { preview, edit, delete }
 
 class _DocumentFormSheet extends StatefulWidget {
-  const _DocumentFormSheet({this.document, required this.store});
+  const _DocumentFormSheet({
+    this.document,
+    required this.store,
+    required this.onLateResult,
+    required this.allowConnectedEditDelete,
+  });
 
   final AppDocument? document;
   final JobTrailStore store;
+  final ValueChanged<String> onLateResult;
+  final bool allowConnectedEditDelete;
 
   @override
   State<_DocumentFormSheet> createState() => _DocumentFormSheetState();
@@ -826,6 +862,9 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
 
   JobTrailStore get store => widget.store;
   bool get _creating => widget.document == null;
+  bool get _canSubmit =>
+      _canSaveDocuments(store) &&
+      (_creating || store.allowsLocalWrites || widget.allowConnectedEditDelete);
   bool get _lockFields => _saving || _committed || _pendingCreate != null;
   bool get _routeCurrent =>
       mounted && ModalRoute.of(context)?.isCurrent == true;
@@ -1043,10 +1082,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 child: FilledButton(
                   key: const ValueKey('document-form-save'),
                   onPressed:
-                      _saving ||
-                          _committed ||
-                          _needsReview ||
-                          !_canSaveDocuments(store)
+                      _saving || _committed || _needsReview || !_canSubmit
                       ? null
                       : _save,
                   child: Text(
@@ -1124,8 +1160,12 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                       'pada data terbaru.'
                 : 'Metadata sudah disimpan. Data terbaru telah dimuat.')
           : _needsReview
-          ? 'Data terbaru telah dimuat. Catat draft ini sebelum menutup form. '
-                'Tinjau metadata terbaru sebelum mengedit kembali.'
+          ? (_creating
+                ? 'Data terbaru telah dimuat. Catat draft ini sebelum menutup '
+                      'form. Periksa metadata terbaru sebelum membuat dokumen lagi.'
+                : 'Data terbaru telah dimuat. Draft tetap tersedia; simpan '
+                      'salinan isian Anda, lalu tutup form dan tinjau metadata '
+                      'terbaru sebelum memulai edit baru. Jangan ulangi update lama.')
           : _pendingCreate != null
           ? 'Hasil simpan belum terkonfirmasi. Coba simpan lagi dengan '
                 'ID dan isian yang sama.'
@@ -1145,7 +1185,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         _committed ||
         _needsReview ||
         !_routeCurrent ||
-        !_canSaveDocuments(store)) {
+        !_canSubmit) {
       return;
     }
     if (!_formKey.currentState!.validate()) return;
@@ -1186,29 +1226,38 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       _saving = true;
       _saveError = null;
     });
+    // Capture before awaiting: the form can be disposed by showTab().
+    final onLateResult = widget.onLateResult;
+    final activeStore = store;
+    final creating = _creating;
+    final successMessage = _successMessage;
     try {
       if (store.allowsLocalWrites) {
         store.saveDocument(item);
         if (_routeCurrent) Navigator.pop(context, _successMessage);
         return;
       }
-      final result = await store.saveDocumentRemote(
+      final result = await activeStore.saveDocumentRemote(
         item,
-        _creating ? SaveMode.create : SaveMode.update,
+        creating ? SaveMode.create : SaveMode.update,
       );
-      if (!_routeActive) return;
+      final message = !result.snapshotCurrent
+          ? 'Metadata sudah disimpan di server, tetapi data terbaru '
+                'belum dapat dimuat. Muat ulang data, jangan simpan ulang.'
+          : activeStore.documentById(result.receipt.id) == null
+          ? 'Metadata sudah disimpan, tetapi dokumen tidak tersedia '
+                'pada data terbaru.'
+          : successMessage;
+      if (!_routeActive) {
+        onLateResult(message);
+        return;
+      }
       // A receipt proves the write committed; never submit this intent again.
       setState(() {
         _committed = true;
         _committedId = result.receipt.id;
         _pendingCreate = null;
-        _saveError = !result.snapshotCurrent
-            ? 'Metadata sudah disimpan di server, tetapi data terbaru '
-                  'belum dapat dimuat. Muat ulang data, jangan simpan ulang.'
-            : store.documentById(result.receipt.id) == null
-            ? 'Metadata sudah disimpan, tetapi dokumen tidak tersedia '
-                  'pada data terbaru.'
-            : _successMessage;
+        _saveError = message;
       });
       if (result.snapshotCurrent &&
           store.documentById(result.receipt.id) != null &&
@@ -1217,7 +1266,17 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         Navigator.pop(context, _successMessage);
       }
     } on RepositoryFailure catch (error) {
-      if (!_routeActive) return;
+      if (!_routeActive) {
+        if (error.issue != RepositoryIssue.authentication) {
+          onLateResult(
+            error.writeOutcomeUnknown
+                ? 'Hasil simpan dokumen belum terkonfirmasi. '
+                      'Periksa data terbaru sebelum mencoba lagi.'
+                : error.issue.message,
+          );
+        }
+        return;
+      }
       setState(() {
         if (error.writeOutcomeUnknown && _creating) {
           _pendingCreate = item;
@@ -1247,15 +1306,25 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         }
       });
     } on ArgumentError catch (error) {
-      if (_routeActive) setState(() => _saveError = error.message.toString());
+      if (_routeActive) {
+        setState(() => _saveError = error.message.toString());
+      } else {
+        onLateResult(RepositoryIssue.unexpected.message);
+      }
     } on StateError catch (error) {
-      if (_routeActive) setState(() => _saveError = error.message);
+      if (_routeActive) {
+        setState(() => _saveError = error.message);
+      } else {
+        onLateResult(RepositoryIssue.unexpected.message);
+      }
     } catch (_) {
       if (_routeActive) {
         setState(() {
           _needsReview = store.isConnected;
           _saveError = RepositoryIssue.unexpected.message;
         });
+      } else {
+        onLateResult(RepositoryIssue.unexpected.message);
       }
     } finally {
       if (_routeActive) setState(() => _saving = false);

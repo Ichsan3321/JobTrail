@@ -55,7 +55,10 @@ Future<JobTrailStore> _pumpDocuments(
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.light,
-      home: Scaffold(body: DocumentsScreen(store: store)),
+      // Retained remote delete is exercised only in this fake test harness.
+      home: Scaffold(
+        body: DocumentsScreen.deferredMutationsForTesting(store: store),
+      ),
     ),
   );
   await tester.pumpAndSettle();
