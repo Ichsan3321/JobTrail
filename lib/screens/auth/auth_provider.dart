@@ -20,11 +20,18 @@ abstract interface class SessionAuthProvider implements AuthProvider {
   void dispose();
 }
 
+/// Optional capability for hosted providers that can launch Google sign-in.
+abstract interface class GoogleOAuthProvider implements SessionAuthProvider {
+  bool get canSignInWithGoogle;
+  Future<void> signInWithGoogle();
+}
+
 enum AuthPhase { loading, signedOut, authenticated, recovery, error }
 
 class AuthSession {
   const AuthSession.loading() : this._(AuthPhase.loading);
-  const AuthSession.signedOut() : this._(AuthPhase.signedOut);
+  const AuthSession.signedOut({AuthIssue? issue})
+    : this._(AuthPhase.signedOut, issue: issue);
   const AuthSession.authenticated(
     String userId,
     DateTime expiresAt, {
@@ -68,6 +75,8 @@ enum AuthIssue implements Exception {
   network('Koneksi bermasalah. Silakan coba lagi.'),
   rateLimit('Terlalu banyak percobaan. Coba lagi nanti.'),
   weakPassword('Password belum memenuhi persyaratan keamanan.'),
+  googleCancelled('Proses masuk dengan Google dibatalkan atau ditolak.'),
+  googleFailed('Gagal masuk dengan Google. Silakan coba lagi.'),
   unexpected('Permintaan gagal. Silakan coba lagi.');
 
   const AuthIssue(this.message);

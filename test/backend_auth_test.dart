@@ -3,11 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
+import 'package:jobtrail/data/jobtrail_repository.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
 import 'package:jobtrail/models/application.dart';
 import 'package:jobtrail/models/recruitment_status.dart';
 import 'package:jobtrail/screens/auth/auth_configuration.dart';
 import 'package:jobtrail/screens/auth/auth_provider.dart';
+
+import 'jobtrail_persistence_test.dart' show snapshot;
+import 'support/fake_jobtrail_repository.dart';
 
 DateTime _future() => DateTime.now().add(const Duration(hours: 1));
 
@@ -80,10 +84,26 @@ class _SessionFake extends UnavailableAuthProvider
   }
 }
 
+class _GoogleSessionFake extends _SessionFake implements GoogleOAuthProvider {
+  _GoogleSessionFake({super.current, this.canSignInWithGoogle = true});
+
+  @override
+  final bool canSignInWithGoogle;
+  int launches = 0;
+  Completer<void>? launching;
+
+  @override
+  Future<void> signInWithGoogle() async {
+    launches++;
+    await launching?.future;
+  }
+}
+
 Future<void> _mount(
   WidgetTester tester,
   _SessionFake provider, {
   AccountHomeBuilder? home,
+  AccountRepositoryFactory? repository,
   JobTrailStore? demoStore,
   bool settle = true,
 }) async {
@@ -98,6 +118,7 @@ Future<void> _mount(
     JobTrailApp(
       authProvider: provider,
       accountHomeBuilder: home,
+      repositoryFactory: repository,
       store: demoStore,
       disposeSessionProvider: true,
     ),
@@ -119,6 +140,9 @@ Future<void> _type(WidgetTester tester, String field, String value) async {
 }
 
 void main() {
+  const googleLabel = 'Lanjutkan dengan Google';
+  const googleDisabled = 'Google Sign-In belum tersedia';
+
   test(
     'backend config fails closed and restricts callback origins and paths',
     () {
@@ -183,6 +207,194 @@ void main() {
       );
     },
   );
+
+  test('Google is opt-in for hosted Web on the configured origin', () {
+    AuthConfiguration config({
+      bool enabled = false,
+      String mode = 'supabase',
+    }) => AuthConfiguration(
+      mode: mode,
+      projectUrl: 'https://sample.supabase.co',
+      publishableKey: 'sb_publishable_example',
+      webOrigin: 'http://localhost:3000',
+      googleOAuthEnabled: enabled,
+    );
+
+    final callback = Uri.parse(
+      'http://localhost:3000/?auth=google&code=example',
+    );
+    final enabled = config(enabled: true);
+    expect(
+      enabled.redirect(AuthCallback.google, onWeb: true).toString(),
+      'http://localhost:3000/?auth=google',
+    );
+    expect(enabled.allowsGoogleOAuth(callback, onWeb: true), isTrue);
+    expect(enabled.callback(callback, onWeb: true), AuthCallback.google);
+    for (final disabled in [config(), config(enabled: true, mode: 'mock')]) {
+      expect(disabled.allowsGoogleOAuth(callback, onWeb: true), isFalse);
+      expect(disabled.callback(callback, onWeb: true), isNull);
+    }
+    final native = Uri.parse('com.example.jobtrail://auth/google?code=example');
+    expect(enabled.allowsGoogleOAuth(native, onWeb: false), isFalse);
+    expect(enabled.callback(native, onWeb: false), isNull);
+    for (final wrongOrigin in [
+      callback.replace(port: 3001),
+      callback.replace(host: '127.0.0.1'),
+      callback.replace(scheme: 'https'),
+      callback.replace(userInfo: 'unexpected'),
+    ]) {
+      expect(enabled.allowsGoogleOAuth(wrongOrigin, onWeb: true), isFalse);
+      expect(enabled.callback(wrongOrigin, onWeb: true), isNull);
+    }
+    expect(
+      enabled.callback(callback.replace(path: '/other'), onWeb: true),
+      isNull,
+    );
+    expect(
+      enabled.callback(
+        callback.replace(query: 'auth=google&auth=confirm'),
+        onWeb: true,
+      ),
+      isNull,
+    );
+  });
+
+  testWidgets('hosted configuration can disable Google on Login and Register', (
+    tester,
+  ) async {
+    final fake = _GoogleSessionFake(canSignInWithGoogle: false);
+    await _mount(tester, fake);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, googleDisabled),
+          )
+          .onPressed,
+      isNull,
+    );
+    await _tap(tester, 'Belum punya akun? Daftar sekarang');
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, googleDisabled),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(fake.launches, 0);
+  });
+
+  testWidgets('mock Login keeps the disabled Google action and demo entry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const JobTrailApp());
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, googleDisabled),
+          )
+          .onPressed,
+      isNull,
+    );
+    await _tap(tester, 'Demo pengembangan: buka Home tanpa login');
+    expect(find.byKey(const ValueKey('S01')), findsOneWidget);
+  });
+
+  testWidgets('Google launches once while pending and retries after failure', (
+    tester,
+  ) async {
+    final fake = _GoogleSessionFake()..launching = Completer<void>();
+    await _mount(tester, fake);
+    await _tap(tester, 'Belum punya akun? Daftar sekarang');
+    final target = find.text(googleLabel);
+    await tester.ensureVisible(target);
+    await tester.tap(target);
+    await tester.tap(target);
+    await tester.pump();
+    expect(fake.launches, 1);
+    expect(find.text('Membuka Google…'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Buat Akun'))
+          .onPressed,
+      isNull,
+    );
+
+    fake.launching!.completeError(StateError('raw provider error'));
+    await tester.pumpAndSettle();
+    expect(find.text(AuthIssue.googleFailed.message), findsOneWidget);
+    expect(find.textContaining('raw provider error'), findsNothing);
+    fake.launching = null;
+    await _tap(tester, googleLabel);
+    expect(fake.launches, 2);
+    expect(find.text(AuthIssue.googleFailed.message), findsNothing);
+    expect(find.text('Akun terhubung'), findsNothing);
+  });
+
+  for (final issue in [AuthIssue.googleCancelled, AuthIssue.googleFailed]) {
+    testWidgets(
+      'Google callback feedback stays on Login and can retry ($issue)',
+      (tester) async {
+        final fake = _GoogleSessionFake(
+          current: AuthSession.signedOut(issue: issue),
+        );
+        await _mount(tester, fake);
+        expect(find.text(issue.message), findsOneWidget);
+        expect(find.text('Masuk ke JobTrail'), findsOneWidget);
+        await _tap(tester, googleLabel);
+        expect(fake.launches, 1);
+        expect(find.text(issue.message), findsNothing);
+      },
+    );
+  }
+
+  testWidgets('Google session loads and restores isolated account snapshots', (
+    tester,
+  ) async {
+    final firstSession = _GoogleSessionFake();
+    final pending = Completer<JobTrailSnapshot>();
+    final first = FakeJobTrailRepository(() => pending.future);
+    final second = FakeJobTrailRepository(
+      () => snapshot('Second account marker'),
+    );
+    final firstIdentity = AuthSession.authenticated('google-a', _future());
+    final secondIdentity = AuthSession.authenticated('google-b', _future());
+    await _mount(
+      tester,
+      firstSession,
+      repository: (userId) {
+        expect(userId, 'google-a');
+        return first;
+      },
+    );
+    await _tap(tester, googleLabel);
+    expect(first.reads, 0);
+    firstSession.emit(firstIdentity);
+    await tester.idle();
+    await tester.pump();
+    expect(find.text('Memuat data JobTrail'), findsOneWidget);
+    expect(first.reads, 1);
+    await _tap(tester, 'Keluar');
+    expect(first.disposed, isTrue);
+    expect(find.text(googleLabel), findsOneWidget);
+
+    final restored = _GoogleSessionFake(current: secondIdentity);
+    await _mount(
+      tester,
+      restored,
+      repository: (userId) {
+        expect(userId, 'google-b');
+        return second;
+      },
+    );
+    pending.complete(snapshot('Previous account marker'));
+    await tester.pumpAndSettle();
+    expect(find.text('Previous account marker'), findsNothing);
+    expect(find.text('Second account marker'), findsWidgets);
+    expect(second.reads, 1);
+    expect(restored.launches, 0);
+  });
 
   testWidgets(
     'real mode shows safe login failure, then gates data and logs out',
