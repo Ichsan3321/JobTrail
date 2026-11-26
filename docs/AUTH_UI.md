@@ -181,6 +181,21 @@ the applicable steps in Chrome and on Android using the commands above.
 The automated suite uses fake session providers. Hosted sign-in, delivery,
 callback handoff, device refresh, and recovery need separate manual results.
 
+### Gmail SMTP development QA
+
+On 27 November 2026, the project lead verified the email flow in Chrome at
+`http://localhost:3000` against development build `53f23b8`. Registration,
+initial and resend confirmation delivery, Supabase email verification, and
+password login passed. Recovery email delivery, the localhost recovery return,
+password reset, old-password rejection, and login with the updated password
+passed. Refresh restored the session. A fresh signup confirmation also opened
+the authenticated dashboard. These results cover the localhost flow with actual
+email delivery. The exact link redirect chain was not recorded.
+
+Gmail SMTP is for development and demos. Production requires an approved
+transactional sender on a verified domain, exact HTTPS callback allowlists, and
+confirmation and recovery QA on the deployed origin. [Gmail sending limits](https://support.google.com/mail/answer/22839?hl=en) · [Supabase production checklist](https://supabase.com/docs/guides/deployment/going-into-prod)
+
 Current Figma splash source: V2 storyboard 602:8733, with Spark 602:8736, Trail 602:8774, Reveal 602:8812 and Ready 602:8850. V2 supersedes the earlier 586:* splash frames. The official curved-J/green-dot component 172:1877 is unchanged; the final hero is 148px wide at 393x852, with a 42px wordmark, violet halo/orbits, the official solid career curve, tracking dot and Discover / Apply / Grow progression. The old loading footer is removed. The stage keeps the 393:852 portrait ratio on small devices and wide desktop previews.
 
 Official logo/envelope SVG sources remain under `docs/auth-assets/`, rasterized at 4x into `assets/home/auth-*.png`. V2's thirteen small official layers are preserved under `docs/auth-assets/splash-v2/` and rasterized transparently at 2x into `assets/home/splash-v2-*.png` (148,612 bytes total). Native Flutter interpolation follows the 0/.5/1.3/2.2-second storyboard anchors, then holds Ready. Figma returned no motion tracks for V2; easing between the supplied states is authored and not certified as exact prototype timing. No video or new package is used. See [V2 visual report](SPLASH_V2_REPORT.md).
