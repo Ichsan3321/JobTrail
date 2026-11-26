@@ -13,6 +13,7 @@ class AppNavigation extends ChangeNotifier {
   final navigatorKey = GlobalKey<NavigatorState>();
   AppTab _selectedTab = AppTab.home;
   bool _disposed = false;
+  int _navigationGeneration = 0;
   String? _scheduleApplicationId;
   String? _savedBoardApplicationId;
   AppTab get selectedTab => _selectedTab;
@@ -21,6 +22,7 @@ class AppNavigation extends ChangeNotifier {
 
   /// The optional ID scopes Schedule or reveals an application saved by Add.
   void showTab(AppTab tab, {String? applicationId}) {
+    _navigationGeneration++;
     _selectedTab = tab;
     _scheduleApplicationId = tab == AppTab.schedule ? applicationId : null;
     _savedBoardApplicationId = tab == AppTab.board ? applicationId : null;
@@ -29,6 +31,7 @@ class AppNavigation extends ChangeNotifier {
   }
 
   Future<void> openDetail(String applicationId) async {
+    _navigationGeneration++;
     await navigatorKey.currentState!.push<void>(
       MaterialPageRoute(
         settings: RouteSettings(
@@ -46,13 +49,20 @@ class AppNavigation extends ChangeNotifier {
 
   Future<void> openAdd() async {
     if (!store.allowsLocalWrites || _disposed) return;
-    final savedId = await navigatorKey.currentState!.push<String>(
+    final navigator = navigatorKey.currentState!;
+    final generation = ++_navigationGeneration;
+    final savedId = await navigator.push<String>(
       MaterialPageRoute(
         settings: const RouteSettings(name: '/application/add'),
         builder: (_) => ApplicationFormScreen(store: store, navigation: this),
       ),
     );
+    // Add starts from the shell. Its result may select Board only while the
+    // same shell still owns navigation and no newer route sits above it.
     if (!_disposed &&
+        generation == _navigationGeneration &&
+        identical(navigatorKey.currentState, navigator) &&
+        !navigator.canPop() &&
         savedId != null &&
         store.applicationById(savedId) != null) {
       showTab(AppTab.board, applicationId: savedId);
@@ -62,6 +72,7 @@ class AppNavigation extends ChangeNotifier {
   /// Call from Detail. Successful save pops back to that same live ID.
   Future<void> openEdit(String applicationId) async {
     if (!store.allowsLocalWrites || _disposed) return;
+    _navigationGeneration++;
     await navigatorKey.currentState!.push<String>(
       MaterialPageRoute(
         settings: RouteSettings(
