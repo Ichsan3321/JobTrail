@@ -241,8 +241,17 @@ void main() {
     await tester.tap(find.text('Periksa server'));
     await tester.pumpAndSettle();
     expect(writes, 1);
-    expect(find.byKey(const ValueKey('S04')), findsNothing);
+    // A matching snapshot is not proof this form received a confirmed receipt.
+    expect(find.byKey(const ValueKey('S04')), findsOneWidget);
+    expect(find.text('Batal'), findsOneWidget);
     expect(store.applicationById(_id)!.company, 'Edit sudah masuk');
+    await tester.tap(find.text('Batal'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit belum terkonfirmasi'), findsOneWidget);
+    await tester.tap(find.text('Kembali tanpa konfirmasi'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('S04')), findsNothing);
+    expect(writes, 1);
   });
 
   testWidgets(

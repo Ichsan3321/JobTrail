@@ -106,9 +106,24 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   bool _createOutcomeUnknown = false;
   String? _committedCreateId;
 
+  // A confirmed receipt is not a guarantee that its record still exists.
+  // These states only permit an explicit exit without saved-ID completion.
+  bool _confirmedRecordMissing = false;
+  bool _matchingServerStateUnconfirmed = false;
+  bool get _safeExitAvailable =>
+      _confirmedRecordMissing || _matchingServerStateUnconfirmed;
+
   bool get _isEditing => widget.applicationId != null;
-  bool get _routeCurrent =>
-      mounted && (ModalRoute.of(context)?.isCurrent ?? false);
+  bool get _routeCurrent {
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    final owner = Navigator.maybeOf(context);
+    return route != null &&
+        route.isCurrent &&
+        owner != null &&
+        identical(widget.navigation.navigatorKey.currentState, owner);
+  }
+
   bool get _formLocked =>
       _saving ||
       _submissionCommitted ||
@@ -166,13 +181,28 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }
 
   Future<bool> _confirmDiscard() async {
-    if (!_dirty) return true;
+    if (!_dirty && !_safeExitAvailable) return true;
+    final missing = _confirmedRecordMissing;
+    final matchOnly = _matchingServerStateUnconfirmed;
     return await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('Batalkan perubahan?'),
+            title: Text(
+              missing
+                  ? 'Lamaran tidak ada di snapshot terbaru'
+                  : matchOnly
+                  ? 'Edit belum terkonfirmasi'
+                  : 'Batalkan perubahan?',
+            ),
             content: Text(
-              _createOutcomeUnknown || _editOutcomeUnknown
+              missing
+                  ? 'Server telah menerima permintaan simpan, tetapi ID '
+                        'lamaran tidak ditemukan setelah pembaruan data. '
+                        'Kembali tanpa membuka Board/Detail dan tanpa kirim ulang?'
+                  : matchOnly
+                  ? 'Data server sama dengan draft, tetapi form tidak menerima '
+                        'confirmed receipt. Kembali tanpa menganggap edit berhasil?'
+                  : _createOutcomeUnknown || _editOutcomeUnknown
                   ? 'Hasil kirim ke server belum pasti. Keluar tidak '
                         'membatalkan permintaan yang mungkin sudah diterima. '
                         'Yakin ingin meninggalkan draft?'
@@ -185,7 +215,11 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Buang perubahan'),
+                child: Text(
+                  _safeExitAvailable
+                      ? 'Kembali tanpa konfirmasi'
+                      : 'Buang perubahan',
+                ),
               ),
             ],
           ),
@@ -195,12 +229,23 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
 
   // A PopScope guard also catches the phone's system-back gesture/button.
   Future<void> _cancel() async {
-    if (_allowPop || _saving || _submissionCommitted) return;
+    if (!_routeCurrent ||
+        _allowPop ||
+        _saving ||
+        (_submissionCommitted && !_safeExitAvailable)) {
+      return;
+    }
     final approved = await _confirmDiscard();
-    if (!approved || !mounted || _saving || _submissionCommitted) return;
+    if (!approved ||
+        !_routeCurrent ||
+        _saving ||
+        (_submissionCommitted && !_safeExitAvailable)) {
+      return;
+    }
     setState(() => _allowPop = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.navigation.back();
+      // Use the owning Navigator, never the globally current route by accident.
+      if (_routeCurrent) Navigator.of(context).pop<String>();
     });
   }
 
@@ -313,10 +358,19 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
             _submissionCommitted = true;
           });
           if (!result.snapshotCurrent || !_editReceiptVisible(id)) {
-            _showError(
-              'Perubahan sudah diterima server, tetapi snapshot belum '
-              'memuat revisi terbaru. Tekan Muat ulang; jangan kirim ulang.',
-            );
+            if (result.snapshotCurrent &&
+                widget.store.applicationById(id) == null) {
+              setState(() => _confirmedRecordMissing = true);
+              _showError(
+                'Edit diterima server, tetapi ID hilang dari snapshot. '
+                'Pilih Batal untuk kembali tanpa konfirmasi.',
+              );
+            } else {
+              _showError(
+                'Perubahan sudah diterima server, tetapi snapshot belum '
+                'memuat revisi terbaru. Tekan Muat ulang; jangan kirim ulang.',
+              );
+            }
             return;
           }
         } else {
@@ -341,10 +395,19 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           });
           if (!result.snapshotCurrent ||
               widget.store.applicationById(id) == null) {
-            _showError(
-              'Lamaran sudah diterima server, tetapi data terbaru belum '
-              'tersedia. Tekan Muat ulang; jangan kirim ulang lamaran.',
-            );
+            if (result.snapshotCurrent &&
+                widget.store.applicationById(id) == null) {
+              setState(() => _confirmedRecordMissing = true);
+              _showError(
+                'Tambah diterima server, tetapi ID hilang dari snapshot. '
+                'Pilih Batal untuk kembali tanpa konfirmasi.',
+              );
+            } else {
+              _showError(
+                'Lamaran sudah diterima server, tetapi data terbaru belum '
+                'tersedia. Tekan Muat ulang; jangan kirim ulang lamaran.',
+              );
+            }
             return;
           }
         }
@@ -436,6 +499,15 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     try {
       await widget.store.refresh();
       if (!_routeCurrent) return;
+      if (widget.store.phase != StorePhase.error &&
+          widget.store.applicationById(id) == null) {
+        setState(() => _confirmedRecordMissing = true);
+        _showError(
+          'ID lamaran tidak ditemukan setelah refresh. '
+          'Pilih Batal untuk kembali tanpa konfirmasi; jangan kirim ulang.',
+        );
+        return;
+      }
       final isReady =
           widget.store.phase != StorePhase.error &&
           (_committedEditId != null
@@ -489,15 +561,13 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
       }
       if (_submittedEditDraft != null &&
           _sameApplicationDraft(server, _submittedEditDraft!)) {
-        // Desired state is already visible in the server snapshot. No second write.
-        setState(() {
-          _committedEditId = id;
-          _committedEditRevision = revision;
-          _editNeedsReview = false;
-          _editOutcomeUnknown = false;
-          _submissionCommitted = true;
-        });
-        _completeNavigation(id);
+        // Identical payload is evidence of state, NOT a confirmed receipt.
+        // It could be another actor's edit (including JT002 conflicts).
+        setState(() => _matchingServerStateUnconfirmed = true);
+        _showError(
+          'Snapshot sama dengan draft, tetapi receipt edit tidak terkonfirmasi. '
+          'Pilih Batal untuk kembali tanpa konfirmasi.',
+        );
         return;
       }
 
@@ -549,6 +619,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           _submittedEditDraft = null;
           _editNeedsReview = false;
           _editOutcomeUnknown = false;
+          _matchingServerStateUnconfirmed = false;
           _dirty = false;
         });
       } else if (decision == 'draft') {
@@ -557,6 +628,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           _editExpectedRevision = revision;
           _editNeedsReview = false;
           _editOutcomeUnknown = false;
+          _matchingServerStateUnconfirmed = false;
         });
         _showError('Draft dipertahankan. Tekan Simpan Perubahan untuk lanjut.');
       }
@@ -599,18 +671,31 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }
 
   void _finishNavigation(String id) {
-    if (!mounted) return;
+    if (!_routeCurrent || !_submissionCommitted) return;
+    if (widget.store.isConnected && widget.store.applicationById(id) == null) {
+      setState(() {
+        _allowPop = false;
+        _confirmedRecordMissing = true;
+      });
+      _showError(
+        'ID lamaran tidak ditemukan. Kembali tanpa konfirmasi '
+        'atau tekan Muat ulang.',
+      );
+      return;
+    }
     try {
       widget.navigation.finishForm(id);
-    } catch (error) {
-      // A commit already happened; allowing Save again would create a duplicate.
-      // Offer navigation retry without writing to the store a second time.
+    } catch (_) {
+      if (!_routeCurrent) return;
+      // Retry must not pop a newer route after the form loses ownership.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Lamaran tersimpan, tetapi gagal kembali.'),
           action: SnackBarAction(
             label: 'Coba lagi',
-            onPressed: () => _finishNavigation(id),
+            onPressed: () {
+              if (_routeCurrent) _finishNavigation(id);
+            },
           ),
         ),
       );
@@ -1074,7 +1159,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               width: 112,
               height: 48,
               child: OutlinedButton(
-                onPressed: (_saving || _submissionCommitted) ? null : _cancel,
+                onPressed:
+                    (_saving || (_submissionCommitted && !_safeExitAvailable))
+                    ? null
+                    : _cancel,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: _navy,
                   side: const BorderSide(color: _border),
@@ -1168,7 +1256,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               Tooltip(
                 message: 'Kembali',
                 child: OutlinedButton(
-                  onPressed: (_saving || _submissionCommitted) ? null : _cancel,
+                  onPressed:
+                      (_saving || (_submissionCommitted && !_safeExitAvailable))
+                      ? null
+                      : _cancel,
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(48, 48),
                     maximumSize: const Size(48, 48),
