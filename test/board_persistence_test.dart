@@ -571,4 +571,88 @@ void main() {
       expect(find.text('Other route'), findsOneWidget);
     });
   });
+
+  group('PR #18 re-review: retry after failed reconcile', () {
+    const stale = 'belum berhasil dimuat';
+
+    testWidgets('conflict: Coba lagi shows the latest status and clears the '
+        'stale error with a single status RPC', (tester) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (_, _, _) {
+        h.repo.read = () =>
+            throw const RepositoryFailure(RepositoryIssue.network);
+        throw const RepositoryFailure(RepositoryIssue.revisionConflict);
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+      expect(find.textContaining(stale), findsOneWidget);
+
+      // Another device had moved the record to Screening.
+      h.repo.read = () =>
+          _snapshot(status: RecruitmentStatus.screening, revision: 9);
+      await tester.tap(find.byKey(const ValueKey('board-preview-retry')));
+      await tester.pumpAndSettle();
+
+      expect(h.store.phase, StorePhase.ready);
+      expect(_previewChip(RecruitmentStatus.screening), findsOneWidget);
+      expect(find.textContaining(stale), findsNothing);
+      expect(find.textContaining('versi terbaru dari server'), findsOneWidget);
+      expect(find.byKey(const ValueKey('board-preview-retry')), findsNothing);
+      expect(h.calls, hasLength(1));
+    });
+
+    testWidgets('ambiguous outcome: Coba lagi shows the latest status and '
+        'clears the stale error with a single status RPC', (tester) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (_, _, _) {
+        h.repo.read = () =>
+            throw const RepositoryFailure(RepositoryIssue.network);
+        throw const RepositoryFailure(
+          RepositoryIssue.network,
+          writeOutcomeUnknown: true,
+        );
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+      expect(find.textContaining(stale), findsOneWidget);
+
+      // The write had in fact landed on the server.
+      h.repo.read = () =>
+          _snapshot(status: RecruitmentStatus.offering, revision: 8);
+      await tester.tap(find.byKey(const ValueKey('board-preview-retry')));
+      await tester.pumpAndSettle();
+
+      expect(h.store.phase, StorePhase.ready);
+      expect(_previewChip(RecruitmentStatus.offering), findsOneWidget);
+      expect(find.textContaining(stale), findsNothing);
+      expect(
+        find.textContaining('Periksa status terbaru di atas'),
+        findsOneWidget,
+      );
+      expect(h.calls, hasLength(1));
+    });
+
+    testWidgets('a retry that fails again keeps the stale wording', (
+      tester,
+    ) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (_, _, _) {
+        h.repo.read = () =>
+            throw const RepositoryFailure(RepositoryIssue.network);
+        throw const RepositoryFailure(RepositoryIssue.revisionConflict);
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('board-preview-retry')));
+      await tester.pumpAndSettle();
+
+      expect(h.store.phase, StorePhase.error);
+      expect(find.textContaining(stale), findsOneWidget);
+      expect(find.textContaining('versi terbaru dari server'), findsNothing);
+      expect(h.calls, hasLength(1));
+    });
+  });
 }

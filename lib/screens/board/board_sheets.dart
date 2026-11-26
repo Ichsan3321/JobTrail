@@ -349,6 +349,10 @@ class _PreviewSheet extends StatefulWidget {
 class _PreviewSheetState extends State<_PreviewSheet> {
   String? _error;
 
+  /// Last status-write failure, kept so its message can be recomputed once a
+  /// retry brings the snapshot back to `ready`.
+  RepositoryFailure? _failure;
+
   /// A status write was committed, but the snapshot did not reconcile yet.
   /// The notice text is derived from the store in [build] so it follows the
   /// refresh as it loads, fails, or succeeds.
@@ -383,6 +387,7 @@ class _PreviewSheetState extends State<_PreviewSheet> {
     setState(() {
       _statusIntentOpen = true;
       _error = null;
+      _failure = null;
       _committedAwaitingReload = false;
     });
     try {
@@ -446,7 +451,10 @@ class _PreviewSheetState extends State<_PreviewSheet> {
       }
     } on RepositoryFailure catch (failure) {
       if (!mounted) return;
-      setState(() => _error = _statusFailureMessage(failure));
+      setState(() {
+        _failure = failure;
+        _error = _statusFailureMessage(failure);
+      });
     }
   }
 
@@ -455,7 +463,13 @@ class _PreviewSheetState extends State<_PreviewSheet> {
     await _store.refresh();
     if (!mounted) return;
     if (_store.phase == StorePhase.ready) {
-      setState(() => _committedAwaitingReload = false);
+      setState(() {
+        _committedAwaitingReload = false;
+        // The snapshot is current now: drop the "could not load" wording and
+        // recompute the failure message against the reconciled data.
+        final failure = _failure;
+        if (failure != null) _error = _statusFailureMessage(failure);
+      });
     }
   }
 
