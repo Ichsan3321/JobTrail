@@ -14,7 +14,7 @@ void main() {
       tester.getSemantics(goal),
       matchesSemantics(
         label: 'Detail target mingguan',
-        value: '0 dari 8 lamaran, 0,0%',
+        value: '0 dari 8 lamaran, 0,0%. Streak 3 minggu.',
         isButton: true,
         hasTapAction: true,
       ),

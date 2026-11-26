@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/activity_streak.dart';
 import '../../core/constants/app_dates.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../core/routes/app_navigation.dart';
@@ -266,53 +267,57 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ),
   );
-  Widget _notification(Agenda a) => InkWell(
-    onTap: () {
-      setState(() => _read.add(a.id));
-      Navigator.pop(context);
-      widget.navigation.openDetail(a.applicationId);
-    },
-    child: _surface(
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _tileIcon(a),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _label(
-                  a.type == AgendaType.interview
-                      ? 'Interview mendatang'
-                      : 'Psikotes terjadwal',
-                  14,
-                  bold: true,
-                ),
-                _label(
-                  store.applicationById(a.applicationId)?.company ?? '',
-                  13,
-                  color: AppColors.gray,
-                ),
-                _label(
-                  '${AppDates.formatWib(a.scheduledAt)} · ${a.locationOrLink}',
-                  12,
-                  color: AppColors.gray,
-                ),
-              ],
+  Widget _notification(Agenda a) {
+    final isPast = a.scheduledAt.isBefore(store.referenceInstantUtc);
+    final title = switch ((a.type, isPast)) {
+      (AgendaType.interview, false) => 'Interview mendatang',
+      (AgendaType.interview, true) => 'Jadwal interview lalu',
+      (AgendaType.test, false) => 'Psikotes terjadwal',
+      (AgendaType.test, true) => 'Jadwal psikotes lalu',
+    };
+    return InkWell(
+      onTap: () {
+        setState(() => _read.add(a.id));
+        Navigator.pop(context);
+        widget.navigation.openDetail(a.applicationId);
+      },
+      child: _surface(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tileIcon(a),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _label(title, 14, bold: true),
+                  _label(
+                    store.applicationById(a.applicationId)?.company ?? '',
+                    13,
+                    color: AppColors.gray,
+                  ),
+                  _label(
+                    '${AppDates.formatWib(a.scheduledAt)} · ${a.locationOrLink}',
+                    12,
+                    color: AppColors.gray,
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (!_read.contains(a.id))
-            const Icon(
-              Icons.radio_button_checked,
-              size: 16,
-              color: AppColors.primary,
-            ),
-        ],
+            if (!_read.contains(a.id))
+              const Icon(
+                Icons.radio_button_checked,
+                size: 16,
+                color: AppColors.primary,
+              ),
+          ],
+        ),
+        color: const Color(0xFFFAFAFF),
       ),
-      color: const Color(0xFFFAFAFF),
-    ),
-  );
+    );
+  }
+
   Widget _tileIcon(Agenda a) => Container(
     width: 44,
     height: 44,
@@ -332,6 +337,119 @@ class _HomeScreenState extends State<HomeScreen> {
       size: 22,
     ),
   );
+  ActivityStreak get streak => calculateActivityStreak(
+    referenceDate: store.referenceDate,
+    appliedDates: store.applications.map(
+      (application) => application.appliedAt,
+    ),
+  );
+
+  Widget _streakCard(ActivityStreak activity) => _surface(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.local_fire_department_outlined,
+              color: Color(0xFFB45309),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _label('Konsistensi mingguan', 14, bold: true),
+                  _label(
+                    '${activity.consecutiveWeeks} minggu berturut-turut',
+                    12,
+                    color: AppColors.gray,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (!activity.hasActivity) ...[
+          _label(
+            'Belum ada aktivitas lamaran tercatat.',
+            12,
+            color: AppColors.gray,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+        ],
+        _label(
+          'Satu lamaran tercatat membuat minggu aktif. Target 8 dihitung terpisah.',
+          12,
+          color: AppColors.gray,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children: activity.weeks.map(_activityWeek).toList(),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _label(
+          'Minggu ini belum memutus streak sampai berakhir. Menghapus lamaran dapat mengubah streak.',
+          12,
+          color: AppColors.gray,
+        ),
+      ],
+    ),
+  );
+
+  Widget _activityWeek(ActivityWeek week) {
+    final (status, icon, background, foreground) = switch (week.status) {
+      ActivityWeekStatus.active => (
+        'Aktif',
+        Icons.check_circle_outline,
+        AppColors.primaryLight,
+        AppColors.primaryDark,
+      ),
+      ActivityWeekStatus.inactive => (
+        'Tidak aktif',
+        Icons.remove_circle_outline,
+        AppColors.background,
+        AppColors.gray,
+      ),
+      ActivityWeekStatus.pending => (
+        'Menunggu',
+        Icons.schedule_outlined,
+        AppColors.peachTint,
+        const Color(0xFF92400E),
+      ),
+    };
+    final end = week.start.add(const Duration(days: 6));
+    final startLabel = AppDates.formatDate(week.start);
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: 'Minggu $startLabel sampai ${AppDates.formatDate(end)}, $status',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(AppRadius.button),
+        ),
+        child: Wrap(
+          spacing: 5,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Icon(icon, size: 14, color: foreground),
+            _label(
+              '${startLabel.substring(0, 5)} · $status',
+              11,
+              color: foreground,
+              bold: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void weeklyGoal() {
     int? selected;
     _sheet(
@@ -400,24 +518,37 @@ class _HomeScreenState extends State<HomeScreen> {
                     _label('Aktivitas Minggu Ini', 15, bold: true),
                     const SizedBox(height: 8),
                     LayoutBuilder(
-                      builder: (context, constraints) => Wrap(
-                        spacing: 5,
-                        runSpacing: 5,
-                        children: [
-                          for (var i = 0; i < 7; i++)
-                            SizedBox(
-                              width: (constraints.maxWidth - 30) / 7,
-                              child: _filter(
-                                '${_days[i]}\n${store.applicationsInPeriod(
-                                  start: start.add(Duration(days: i)),
-                                  end: start.add(Duration(days: i + 1)),
-                                ).length}',
-                                selected == i,
-                                () => refresh(() => selected = i),
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final minTarget =
+                            MediaQuery.textScalerOf(context).scale(12) > 18
+                            ? 64.0
+                            : 48.0;
+                        final columns = (width / minTarget).floor().clamp(1, 7);
+                        final spacing = columns == 1
+                            ? 0.0
+                            : ((width - minTarget * columns) / (columns - 1))
+                                  .clamp(0.0, 5.0);
+                        return Wrap(
+                          spacing: spacing,
+                          runSpacing: 5,
+                          children: [
+                            for (var i = 0; i < 7; i++)
+                              SizedBox(
+                                width:
+                                    (width - (columns - 1) * spacing) / columns,
+                                child: _filter(
+                                  '${_days[i]}\n${store.applicationsInPeriod(
+                                    start: start.add(Duration(days: i)),
+                                    end: start.add(Duration(days: i + 1)),
+                                  ).length}',
+                                  selected == i,
+                                  () => refresh(() => selected = i),
+                                ),
                               ),
-                            ),
-                        ],
-                      ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 10),
                     _surface(
@@ -440,6 +571,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                           child: Text(app.company),
                         ),
+                    const SizedBox(height: 20),
+                    _streakCard(streak),
                   ],
                 ),
               ),
@@ -455,6 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
     listenable: store,
     builder: (context, _) {
       final dist = store.distribution();
+      final activity = streak;
       final agendas =
           store.agendas
               .where((a) => !a.scheduledAt.isBefore(store.referenceInstantUtc))
@@ -462,391 +596,429 @@ class _HomeScreenState extends State<HomeScreen> {
             ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
       final apps = store.applications.toList()
         ..sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
-      return Stack(
+      return Column(
         key: const ValueKey('S01'),
         children: [
-          ListView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 88),
-            children: [
-              Row(
-                children: [
-                  if (widget.onAccountPressed != null)
-                    IconButton.filledTonal(
-                      tooltip: 'Buka menu akun',
-                      onPressed: widget.onAccountPressed,
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(48, 48),
-                        backgroundColor: AppColors.primaryLight,
-                        foregroundColor: AppColors.primary,
-                      ),
-                      icon: widget.displayName == null
-                          ? const Icon(Icons.person_outline_rounded)
-                          : ExcludeSemantics(
-                              child: Text(
-                                widget.displayName!.characters.first
-                                    .toUpperCase(),
-                                style: _text(
-                                  18,
-                                  color: AppColors.primary,
-                                  bold: true,
-                                ),
-                              ),
-                            ),
-                    )
-                  else
-                    Semantics(
-                      label: 'JobTrail',
-                      image: true,
-                      child: SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.asset(
-                                'assets/home/logo-background.png',
-                              ),
-                            ),
-                            Positioned(
-                              left: 20.3,
-                              top: 8.3,
-                              width: 6.4,
-                              height: 6.4,
-                              child: Image.asset('assets/home/logo-dot.png'),
-                            ),
-                            Positioned(
-                              left: 13,
-                              top: 16,
-                              width: 12,
-                              height: 17,
-                              child: Image.asset('assets/home/logo-letter.png'),
-                            ),
-                          ],
+          Expanded(
+            child: ListView(
+              key: const ValueKey('home-content'),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              children: [
+                Row(
+                  children: [
+                    if (widget.onAccountPressed != null)
+                      IconButton.filledTonal(
+                        tooltip: 'Buka menu akun',
+                        onPressed: widget.onAccountPressed,
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                          backgroundColor: AppColors.primaryLight,
+                          foregroundColor: AppColors.primary,
                         ),
-                      ),
-                    ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _label(
-                          widget.displayName == null
-                              ? 'Selamat datang,'
-                              : 'Selamat datang, ${widget.displayName}',
-                          12,
-                          color: AppColors.gray,
-                        ),
-                        _label('Lanjutkan perjalananmu', 17, bold: true),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Notifikasi',
-                    onPressed: notifications,
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      side: const BorderSide(color: AppColors.border),
-                    ),
-                    icon: Stack(
-                      children: [
-                        const Icon(Icons.notifications_outlined, size: 22),
-                        if (store.agendas.any((a) => !_read.contains(a.id)))
-                          const Positioned(
-                            right: 0,
-                            top: 0,
-                            child: Icon(
-                              Icons.circle,
-                              size: 6,
-                              color: AppColors.peach,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Semantics(
-                button: true,
-                excludeSemantics: true,
-                key: const ValueKey('home-weekly-goal'),
-                label: 'Detail target mingguan',
-                value:
-                    '${store.weeklyAchieved} dari ${store.weeklyGoal.target} lamaran, $percent',
-                onTap: weeklyGoal,
-                child: InkWell(
-                  excludeFromSemantics: true,
-                  onTap: weeklyGoal,
-                  child: Container(
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(22),
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF6259F5), Color(0xFF4841E7)],
-                      ),
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned(
-                          right: -30,
-                          top: -40,
-                          child: Container(
-                            width: 120,
-                            height: 120,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Color(0x18FFFFFF),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          left: -30,
-                          bottom: -35,
-                          child: Container(
-                            width: 100,
-                            height: 100,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Color(0x182DD4A7),
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _label(
-                                'Target minggu ini',
-                                13,
-                                color: Colors.white70,
-                              ),
-                              const SizedBox(height: 10),
-                              _label(
-                                '${store.weeklyAchieved} dari ${store.weeklyGoal.target} lamaran',
-                                24,
-                                color: Colors.white,
-                                bold: true,
-                              ),
-                              const SizedBox(height: 12),
-                              _progress(light: true),
-                              const SizedBox(height: 10),
-                              Wrap(
-                                alignment: WrapAlignment.spaceBetween,
-                                spacing: 16,
-                                children: [
-                                  _label(
-                                    '$remaining lamaran lagi untuk capai target',
-                                    12,
-                                    color: Colors.white,
-                                  ),
-                                  _label(
-                                    percent,
-                                    12,
-                                    color: AppColors.mint,
+                        icon: widget.displayName == null
+                            ? const Icon(Icons.person_outline_rounded)
+                            : ExcludeSemantics(
+                                child: Text(
+                                  widget.displayName!.characters.first
+                                      .toUpperCase(),
+                                  style: _text(
+                                    18,
+                                    color: AppColors.primary,
                                     bold: true,
                                   ),
-                                ],
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              LayoutBuilder(
-                builder: (context, c) => Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final item in [
-                      (
-                        'Total',
-                        store.applications.length,
-                        Colors.white,
-                        AppColors.navy,
-                        '+${store.weeklyAchieved} mgg ini',
-                      ),
-                      (
-                        'Interview',
-                        dist[RecruitmentStatus.interview]!,
-                        const Color(0xFFE0F2FE),
-                        const Color(0xFF0369A1),
-                        '${agendas.where((a) => a.type == AgendaType.interview).length} mendatang',
-                      ),
-                      (
-                        'Offering',
-                        dist[RecruitmentStatus.offering]!,
-                        const Color(0xFFD1FAE5),
-                        const Color(0xFF047857),
-                        'Review',
-                      ),
-                    ])
-                      SizedBox(
-                        width: MediaQuery.textScalerOf(context).scale(12) > 18
-                            ? c.maxWidth
-                            : (c.maxWidth - 20) / 3,
-                        child: _surface(
-                          Column(
+                      )
+                    else
+                      Semantics(
+                        label: 'JobTrail',
+                        image: true,
+                        child: SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: Stack(
                             children: [
-                              _label(item.$1, 12, color: item.$4),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${item.$2}',
-                                key: item.$1 == 'Total'
-                                    ? const ValueKey('home-total')
-                                    : null,
-                                style: _text(24, color: item.$4, bold: true),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.asset(
+                                  'assets/home/logo-background.png',
+                                ),
                               ),
-                              _label(item.$5, 10, color: item.$4),
+                              Positioned(
+                                left: 20.3,
+                                top: 8.3,
+                                width: 6.4,
+                                height: 6.4,
+                                child: Image.asset('assets/home/logo-dot.png'),
+                              ),
+                              Positioned(
+                                left: 13,
+                                top: 16,
+                                width: 12,
+                                height: 17,
+                                child: Image.asset(
+                                  'assets/home/logo-letter.png',
+                                ),
+                              ),
                             ],
-                          ),
-                          color: item.$3,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 12,
-                            horizontal: 6,
                           ),
                         ),
                       ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 16,
-                children: [
-                  _label('Jadwal Terdekat', 16, bold: true),
-                  TextButton(
-                    onPressed: () => widget.navigation.showTab(AppTab.schedule),
-                    child: _label(
-                      'Lihat semua ›',
-                      13,
-                      color: AppColors.primary,
-                      bold: true,
-                    ),
-                  ),
-                ],
-              ),
-              if (agendas.isEmpty)
-                _label(
-                  'Tidak ada jadwal mendatang.',
-                  13,
-                  color: AppColors.gray,
-                ),
-              for (final a in agendas.take(2))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: InkWell(
-                    onTap: () => widget.navigation.openDetail(a.applicationId),
-                    child: _surface(
-                      Row(
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            width: 54,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            decoration: BoxDecoration(
-                              color: a.type == AgendaType.interview
-                                  ? const Color(0xFFE0F2FE)
-                                  : const Color(0xFFFEF3C7),
-                              borderRadius: BorderRadius.circular(14),
+                          _label(
+                            widget.displayName == null
+                                ? 'Selamat datang,'
+                                : 'Selamat datang, ${widget.displayName}',
+                            12,
+                            color: AppColors.gray,
+                          ),
+                          _label('Lanjutkan perjalananmu', 17, bold: true),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Notifikasi',
+                      onPressed: notifications,
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        side: const BorderSide(color: AppColors.border),
+                      ),
+                      icon: Stack(
+                        children: [
+                          const Icon(Icons.notifications_outlined, size: 22),
+                          if (store.agendas.any((a) => !_read.contains(a.id)))
+                            const Positioned(
+                              right: 0,
+                              top: 0,
+                              child: Icon(
+                                Icons.circle,
+                                size: 6,
+                                color: AppColors.peach,
+                              ),
                             ),
-                            child: Column(
-                              children: [
-                                _label(
-                                  _days[AppDates.wibDate(a.scheduledAt)
-                                              .weekday -
-                                          1]
-                                      .toUpperCase(),
-                                  10,
-                                ),
-                                _label(
-                                  '${AppDates.wibDate(a.scheduledAt).day}',
-                                  20,
-                                  bold: true,
-                                ),
-                              ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Semantics(
+                  button: true,
+                  excludeSemantics: true,
+                  key: const ValueKey('home-weekly-goal'),
+                  label: 'Detail target mingguan',
+                  value:
+                      '${store.weeklyAchieved} dari ${store.weeklyGoal.target} lamaran, $percent. '
+                      'Streak ${activity.consecutiveWeeks} minggu.',
+                  onTap: weeklyGoal,
+                  child: InkWell(
+                    excludeFromSemantics: true,
+                    onTap: weeklyGoal,
+                    child: Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6259F5), Color(0xFF4841E7)],
+                        ),
+                      ),
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            right: -30,
+                            top: -40,
+                            child: Container(
+                              width: 120,
+                              height: 120,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Color(0x18FFFFFF),
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
+                          Positioned(
+                            left: -30,
+                            bottom: -35,
+                            child: Container(
+                              width: 100,
+                              height: 100,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Color(0x182DD4A7),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(20),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                Wrap(
+                                  alignment: WrapAlignment.spaceBetween,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 12,
+                                  runSpacing: 6,
+                                  children: [
+                                    _label(
+                                      'Target minggu ini',
+                                      13,
+                                      color: Colors.white70,
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.peachTint,
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: _label(
+                                        'Streak · ${activity.consecutiveWeeks} minggu',
+                                        10,
+                                        color: const Color(0xFFB45309),
+                                        bold: true,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
                                 _label(
-                                  a.type == AgendaType.interview
-                                      ? 'Interview User'
-                                      : 'Psikotes Online',
-                                  14,
+                                  '${store.weeklyAchieved} dari ${store.weeklyGoal.target} lamaran',
+                                  24,
+                                  color: Colors.white,
                                   bold: true,
                                 ),
-                                _label(
-                                  store
-                                          .applicationById(a.applicationId)
-                                          ?.company ??
-                                      '',
-                                  13,
-                                  color: AppColors.gray,
-                                ),
-                                _label(
-                                  '${AppDates.formatWib(a.scheduledAt)} · ${a.locationOrLink}',
-                                  11,
-                                  color: AppColors.gray,
+                                const SizedBox(height: 12),
+                                _progress(light: true),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  alignment: WrapAlignment.spaceBetween,
+                                  spacing: 16,
+                                  children: [
+                                    _label(
+                                      '$remaining lamaran lagi untuk capai target',
+                                      12,
+                                      color: Colors.white,
+                                    ),
+                                    _label(
+                                      percent,
+                                      12,
+                                      color: AppColors.mint,
+                                      bold: true,
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
                           ),
                         ],
                       ),
-                      padding: const EdgeInsets.all(12),
                     ),
                   ),
                 ),
-              const SizedBox(height: 14),
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                spacing: 16,
-                children: [
-                  _label('Lamaran Terbaru', 16, bold: true),
-                  _label('${apps.length} Terdaftar', 12, color: AppColors.gray),
-                ],
-              ),
-              if (apps.isEmpty) const Text('Belum ada lamaran.'),
-              for (final app in apps.take(3))
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: _application(app),
+                const SizedBox(height: 14),
+                LayoutBuilder(
+                  builder: (context, c) => Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final item in [
+                        (
+                          'Total',
+                          store.applications.length,
+                          Colors.white,
+                          AppColors.navy,
+                          '+${store.weeklyAchieved} mgg ini',
+                        ),
+                        (
+                          'Interview',
+                          dist[RecruitmentStatus.interview]!,
+                          const Color(0xFFE0F2FE),
+                          const Color(0xFF0369A1),
+                          '${agendas.where((a) => a.type == AgendaType.interview).length} mendatang',
+                        ),
+                        (
+                          'Offering',
+                          dist[RecruitmentStatus.offering]!,
+                          const Color(0xFFD1FAE5),
+                          const Color(0xFF047857),
+                          'Review',
+                        ),
+                      ])
+                        SizedBox(
+                          width: MediaQuery.textScalerOf(context).scale(12) > 18
+                              ? c.maxWidth
+                              : (c.maxWidth - 20) / 3,
+                          child: _surface(
+                            Column(
+                              children: [
+                                _label(item.$1, 12, color: item.$4),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${item.$2}',
+                                  key: item.$1 == 'Total'
+                                      ? const ValueKey('home-total')
+                                      : null,
+                                  style: _text(24, color: item.$4, bold: true),
+                                ),
+                                _label(item.$5, 10, color: item.$4),
+                              ],
+                            ),
+                            color: item.$3,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 12,
+                              horizontal: 6,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-            ],
+                const SizedBox(height: 16),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 16,
+                  children: [
+                    _label('Jadwal Terdekat', 16, bold: true),
+                    TextButton(
+                      onPressed: () =>
+                          widget.navigation.showTab(AppTab.schedule),
+                      child: _label(
+                        'Lihat semua ›',
+                        13,
+                        color: AppColors.primary,
+                        bold: true,
+                      ),
+                    ),
+                  ],
+                ),
+                if (agendas.isEmpty)
+                  _label(
+                    'Tidak ada jadwal mendatang.',
+                    13,
+                    color: AppColors.gray,
+                  ),
+                for (final a in agendas.take(2))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: InkWell(
+                      onTap: () =>
+                          widget.navigation.openDetail(a.applicationId),
+                      child: _surface(
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 54,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: a.type == AgendaType.interview
+                                    ? const Color(0xFFE0F2FE)
+                                    : const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Column(
+                                children: [
+                                  _label(
+                                    _days[AppDates.wibDate(a.scheduledAt)
+                                                .weekday -
+                                            1]
+                                        .toUpperCase(),
+                                    10,
+                                  ),
+                                  _label(
+                                    '${AppDates.wibDate(a.scheduledAt).day}',
+                                    20,
+                                    bold: true,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _label(
+                                    a.type == AgendaType.interview
+                                        ? 'Interview User'
+                                        : 'Psikotes Online',
+                                    14,
+                                    bold: true,
+                                  ),
+                                  _label(
+                                    store
+                                            .applicationById(a.applicationId)
+                                            ?.company ??
+                                        '',
+                                    13,
+                                    color: AppColors.gray,
+                                  ),
+                                  _label(
+                                    '${AppDates.formatWib(a.scheduledAt)} · ${a.locationOrLink}',
+                                    11,
+                                    color: AppColors.gray,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        padding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 16,
+                  children: [
+                    _label('Lamaran Terbaru', 16, bold: true),
+                    _label(
+                      '${apps.length} Terdaftar',
+                      12,
+                      color: AppColors.gray,
+                    ),
+                  ],
+                ),
+                if (apps.isEmpty) const Text('Belum ada lamaran.'),
+                for (final app in apps.take(3))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: _application(app),
+                  ),
+              ],
+            ),
           ),
-          Positioned(
-            right: 20,
-            bottom: 16,
-            child: FloatingActionButton(
-              key: const ValueKey('home-add'),
-              onPressed: store.allowsLocalWrites
-                  ? widget.navigation.openAdd
-                  : null,
-              tooltip: store.allowsLocalWrites
-                  ? 'Tambah Lamaran'
-                  : 'Tambah lamaran belum tersedia untuk akun ini',
-              shape: const CircleBorder(),
-              backgroundColor: store.allowsLocalWrites
-                  ? AppColors.primary
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              foregroundColor: store.allowsLocalWrites
-                  ? Colors.white
-                  : Theme.of(context).disabledColor,
-              elevation: 0,
-              child: const Icon(Icons.add, size: 36),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: FloatingActionButton(
+                key: const ValueKey('home-add'),
+                onPressed: store.allowsLocalWrites
+                    ? widget.navigation.openAdd
+                    : null,
+                tooltip: store.allowsLocalWrites
+                    ? 'Tambah Lamaran'
+                    : 'Tambah lamaran belum tersedia untuk akun ini',
+                shape: const CircleBorder(),
+                backgroundColor: store.allowsLocalWrites
+                    ? AppColors.primary
+                    : Theme.of(context).colorScheme.surfaceContainerHighest,
+                foregroundColor: store.allowsLocalWrites
+                    ? Colors.white
+                    : Theme.of(context).disabledColor,
+                elevation: 0,
+                child: const Icon(Icons.add, size: 36),
+              ),
             ),
           ),
         ],
