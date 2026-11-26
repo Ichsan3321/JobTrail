@@ -19,16 +19,17 @@ const _saveKey = ValueKey('document-form-save');
 class _DocumentRepository extends FakeJobTrailRepository {
   _DocumentRepository() : super(() => throw StateError('Set read first'));
 
-  late FutureOr<DocumentReceipt> Function(AppDocument, SaveMode) write;
-  final calls = <(AppDocument, SaveMode)>[];
+  late FutureOr<DocumentReceipt> Function(AppDocument, SaveMode, int?) write;
+  final calls = <(AppDocument, SaveMode, int?)>[];
 
   @override
   Future<DocumentReceipt> saveDocument(
     AppDocument document,
-    SaveMode mode,
-  ) async {
-    calls.add((document, mode));
-    return write(document, mode);
+    SaveMode mode, {
+    int? expectedRevision,
+  }) async {
+    calls.add((document, mode, expectedRevision));
+    return write(document, mode, expectedRevision);
   }
 }
 
@@ -42,18 +43,28 @@ JobTrailSnapshot _snapshot(List<AppDocument> documents) => JobTrailSnapshot(
   applicationRevisions: const {},
 );
 
-AppDocument _serverDocument(AppDocument input) => AppDocument(
-  id: input.id,
-  title: input.title,
-  category: input.category,
-  fileName: input.fileName,
-  version: input.version,
-  notes: input.notes,
-  updatedAt: _serverTimestamp,
-);
+AppDocument _serverDocument(AppDocument input, {int revision = 1}) =>
+    AppDocument(
+      id: input.id,
+      title: input.title,
+      category: input.category,
+      fileName: input.fileName,
+      version: input.version,
+      notes: input.notes,
+      updatedAt: _serverTimestamp,
+      revision: revision,
+    );
 
-DocumentReceipt _receipt(AppDocument item, {bool replayed = false}) =>
-    (id: item.id, updatedAt: _serverTimestamp, replayed: replayed);
+DocumentReceipt _receipt(
+  AppDocument item, {
+  bool replayed = false,
+  int? revision = 1,
+}) => (
+  id: item.id,
+  updatedAt: _serverTimestamp,
+  replayed: replayed,
+  revision: revision,
+);
 
 Future<JobTrailStore> _pumpDocuments(
   WidgetTester tester,
@@ -100,7 +111,7 @@ void main() {
     final repo = _DocumentRepository();
     final documents = <AppDocument>[];
     repo.read = () => _snapshot(documents);
-    repo.write = (item, mode) {
+    repo.write = (item, mode, revision) {
       if (repo.calls.length == 1) {
         documents.add(_serverDocument(item));
         throw const RepositoryFailure(
@@ -123,6 +134,7 @@ void main() {
     expect(repo.calls, hasLength(2));
     expect(identical(repo.calls[0].$1, repo.calls[1].$1), isTrue);
     expect(repo.calls.map((call) => call.$2), everyElement(SaveMode.create));
+    expect(repo.calls.map((call) => call.$3), everyElement(isNull));
     expect(store.documents, hasLength(1));
     expect(store.documents.single.updatedAt, _serverTimestamp);
     expect(find.text('CV Persistence'), findsOneWidget);
@@ -136,6 +148,7 @@ void main() {
     final documents = [
       AppDocument(
         id: 'document-edit',
+        revision: 4,
         title: 'CV Lama',
         category: DocumentCategory.cvResume,
         fileName: 'cv.pdf',
@@ -144,9 +157,10 @@ void main() {
       ),
     ];
     repo.read = () => _snapshot(documents);
-    repo.write = (item, mode) {
-      documents[0] = _serverDocument(item);
-      return _receipt(item);
+    repo.write = (item, mode, revision) {
+      expect(revision, 4);
+      documents[0] = _serverDocument(item, revision: 5);
+      return _receipt(item, revision: 5);
     };
     final store = await _pumpDocuments(
       tester,
@@ -161,6 +175,8 @@ void main() {
     await _save(tester);
     expect(repo.calls.single.$2, SaveMode.update);
     expect(repo.calls.single.$1.id, 'document-edit');
+    expect(repo.calls.single.$3, 4);
+    expect(store.documentRevision('document-edit'), 5);
     expect(store.documents.single.title, 'CV Baru');
     expect(store.documents.single.updatedAt, _serverTimestamp);
     expect(tester.takeException(), isNull);
@@ -172,6 +188,7 @@ void main() {
     final repo = _DocumentRepository();
     final item = AppDocument(
       id: 'document-gated',
+      revision: 4,
       title: 'CV Connected',
       category: DocumentCategory.cvResume,
       fileName: 'cv.pdf',
@@ -201,6 +218,139 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'legacy null revision keeps edit and delete gated even in test seam',
+    (tester) async {
+      final repo = _DocumentRepository();
+      final item = AppDocument(
+        id: 'document-legacy',
+        title: 'CV Legacy',
+        category: DocumentCategory.cvResume,
+        fileName: 'legacy.pdf',
+        version: '1.0',
+        updatedAt: _instant,
+      );
+      repo.read = () => _snapshot([item]);
+      final store = await _pumpDocuments(
+        tester,
+        repo,
+        exerciseDeferredMutations: true,
+      );
+      expect(store.documentRevision(item.id), isNull);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('documents-add')))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('document-menu-document-legacy')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Edit metadata'), findsNothing);
+      expect(find.text('Hapus dokumen'), findsNothing);
+      expect(find.text('Lihat metadata'), findsOneWidget);
+      expect(repo.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final refreshBeforeSave in [false, true]) {
+    testWidgets(
+      'stale edit retains draft and reviews winner (refreshed=$refreshBeforeSave)',
+      (tester) async {
+        final repo = _DocumentRepository();
+        final original = AppDocument(
+          id: 'document-conflict',
+          revision: 4,
+          title: 'Portofolio Awal',
+          category: DocumentCategory.portfolio,
+          fileName: 'portfolio.pdf',
+          version: '1.0',
+          updatedAt: _instant,
+        );
+        // Identical payload/timestamp, different revision: a full save of the
+        // same metadata still increments the server revision.
+        final winner = AppDocument(
+          id: original.id,
+          revision: 5,
+          title: refreshBeforeSave ? original.title : 'Portofolio Sesi Lain',
+          category: original.category,
+          fileName: original.fileName,
+          version: original.version,
+          updatedAt: original.updatedAt,
+        );
+        final documents = [original];
+        repo.read = () => _snapshot(documents);
+        repo.write = (item, mode, revision) {
+          expect(mode, SaveMode.update);
+          expect(revision, 4);
+          expect(item.id, original.id);
+          throw const RepositoryFailure(RepositoryIssue.revisionConflict);
+        };
+        final store = await _pumpDocuments(
+          tester,
+          repo,
+          exerciseDeferredMutations: true,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('document-menu-document-conflict')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Edit metadata'));
+        await tester.pumpAndSettle();
+        final fields = find.byType(TextFormField);
+        await tester.enterText(fields.at(0), 'Draft Portofolio');
+        await tester.enterText(fields.at(3), 'Catatan draft konflik');
+        documents[0] = winner;
+        if (refreshBeforeSave) {
+          await store.refresh();
+          await tester.pumpAndSettle();
+        }
+        final reads = repo.reads;
+        await _save(tester);
+        expect(repo.calls, hasLength(refreshBeforeSave ? 0 : 1));
+        expect(repo.reads, reads + (refreshBeforeSave ? 0 : 1));
+        expect(store.documentRevision(original.id), 5);
+        expect(store.documentById(original.id), same(winner));
+        expect(
+          find.text(RepositoryIssue.revisionConflict.message),
+          findsOneWidget,
+        );
+        final review = find.byKey(const ValueKey('document-server-review'));
+        expect(tester.widget<Text>(review).data, contains(winner.title));
+        expect(tester.widget<Text>(review).data, contains('Revisi server: 5'));
+        expect(
+          tester.widget<TextFormField>(fields.at(0)).controller!.text,
+          'Draft Portofolio',
+        );
+        expect(
+          tester.widget<TextFormField>(fields.at(3)).controller!.text,
+          'Catatan draft konflik',
+        );
+        expect(
+          tester.widget<FilledButton>(find.byKey(_saveKey)).onPressed,
+          isNull,
+        );
+        final refresh = find.byKey(const ValueKey('document-form-refresh'));
+        await tester.ensureVisible(refresh);
+        await tester.tap(refresh);
+        await tester.pumpAndSettle();
+        expect(repo.calls, hasLength(refreshBeforeSave ? 0 : 1));
+        expect(store.documentRevision(original.id), 5);
+        expect(
+          tester.widget<TextFormField>(fields.at(0)).controller!.text,
+          'Draft Portofolio',
+        );
+        expect(
+          tester.widget<FilledButton>(find.byKey(_saveKey)).onPressed,
+          isNull,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   // Exercise the retained (not production-enabled) update path. A successful
   // read is not an atomic revision precondition, so never retry the old intent.
   for (final failInitialRead in [false, true]) {
@@ -210,6 +360,7 @@ void main() {
         final repo = _DocumentRepository();
         final original = AppDocument(
           id: 'document-ambiguous-edit',
+          revision: 4,
           title: 'CV Lama',
           category: DocumentCategory.cvResume,
           fileName: 'cv.pdf',
@@ -222,8 +373,9 @@ void main() {
           if (failRead) throw const RepositoryFailure(RepositoryIssue.network);
           return _snapshot(documents);
         };
-        repo.write = (item, mode) {
-          documents[0] = _serverDocument(item);
+        repo.write = (item, mode, revision) {
+          expect(revision, 4);
+          documents[0] = _serverDocument(item, revision: 5);
           failRead = failInitialRead;
           throw const RepositoryFailure(
             RepositoryIssue.network,
@@ -250,6 +402,7 @@ void main() {
         await _save(tester);
         expect(repo.calls.single.$2, SaveMode.update);
         expect(repo.calls.single.$1.id, original.id);
+        expect(repo.calls.single.$3, 4);
         expect(repo.reads, readsBeforeWrite + 1);
         expect(
           find.textContaining('Hasil perubahan belum terkonfirmasi'),
@@ -287,6 +440,7 @@ void main() {
         expect(repo.reads, readsBeforeWrite + 2);
         expect(store.documentById(original.id)!.title, 'CV Revisi');
         expect(store.documentById(original.id)!.updatedAt, _serverTimestamp);
+        expect(store.documentRevision(original.id), 5);
         expect(
           find.textContaining('Data terbaru telah dimuat'),
           findsOneWidget,
@@ -320,7 +474,7 @@ void main() {
       if (failRead) throw const RepositoryFailure(RepositoryIssue.network);
       return _snapshot(documents);
     };
-    repo.write = (item, mode) {
+    repo.write = (item, mode, revision) {
       documents.add(_serverDocument(item));
       failRead = true;
       return _receipt(item);
@@ -354,7 +508,7 @@ void main() {
       final documents = <AppDocument>[];
       final response = Completer<DocumentReceipt>();
       repo.read = () => _snapshot(documents);
-      repo.write = (_, _) => response.future;
+      repo.write = (_, _, _) => response.future;
       final store = JobTrailStore.connected(repo);
       final navigation = AppNavigation(store);
       addTearDown(store.dispose);
@@ -396,6 +550,7 @@ void main() {
       expect(navigation.navigatorKey.currentState!.canPop(), isFalse);
       expect(repo.calls, hasLength(1));
       expect(store.documents, hasLength(succeeds ? 1 : 0));
+      expect(find.byType(SnackBar), findsNothing);
       expect(
         find.descendant(
           of: find.byType(SnackBar),
@@ -405,11 +560,12 @@ void main() {
                 : RepositoryIssue.network.message,
           ),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       navigation.showTab(AppTab.documents);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('S06')), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
       expect(
         find.text('CV Persistence'),
         succeeds ? findsOneWidget : findsNothing,
@@ -423,7 +579,7 @@ void main() {
     final documents = <AppDocument>[];
     final response = Completer<DocumentReceipt>();
     repo.read = () => _snapshot(documents);
-    repo.write = (item, mode) => response.future;
+    repo.write = (item, mode, revision) => response.future;
     final store = await _pumpDocuments(tester, repo);
     await _openCreate(tester);
     final button = find.byKey(_saveKey);
@@ -440,6 +596,8 @@ void main() {
     response.complete(_receipt(item));
     await tester.pumpAndSettle();
     expect(store.documents, hasLength(1));
+    expect(find.text('Metadata dokumen ditambahkan.'), findsOneWidget);
+    expect(repo.calls.single.$3, isNull);
     expect(tester.takeException(), isNull);
   });
 }

@@ -66,7 +66,11 @@ class AppShell extends StatelessWidget {
                     savedApplicationId: navigation.savedBoardApplicationId,
                   ),
                   ScheduleScreen(store: store, navigation: navigation),
-                  DocumentsScreen(store: store),
+                  DocumentsScreen(
+                    store: store,
+                    isActiveTab: () =>
+                        navigation.selectedTab == AppTab.documents,
+                  ),
                   StatisticsScreen(store: store),
                 ],
               ),

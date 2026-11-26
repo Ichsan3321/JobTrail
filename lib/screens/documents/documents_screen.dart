@@ -18,7 +18,7 @@ bool _canSaveDocuments(JobTrailStore store) =>
         (store.phase == StorePhase.ready || store.phase == StorePhase.empty));
 
 class DocumentsScreen extends StatefulWidget {
-  const DocumentsScreen({super.key, required this.store})
+  const DocumentsScreen({super.key, required this.store, this.isActiveTab})
     : _exerciseDeferredMutations = false;
 
   /// Exercises the retained edit/delete implementation with a fake repository.
@@ -27,9 +27,13 @@ class DocumentsScreen extends StatefulWidget {
   const DocumentsScreen.deferredMutationsForTesting({
     super.key,
     required this.store,
+    this.isActiveTab,
   }) : _exerciseDeferredMutations = true;
 
   final JobTrailStore store;
+  // Read live navigation state, not the IndexedStack's shared route state.
+  // Standalone screens (e.g. widget tests) own their own route.
+  final bool Function()? isActiveTab;
   final bool _exerciseDeferredMutations;
 
   bool get _allowConnectedEditDelete =>
@@ -50,11 +54,15 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   bool get _canWriteDocuments =>
       !_deleteBusy && _deleteRecovery == null && _canSaveDocuments(store);
 
-  // Connected edit/delete require an atomic server-side revision precondition.
-  // A snapshot comparison alone cannot prevent cross-session lost updates.
-  bool get _canEditDelete =>
+  bool get _ownsActiveTab => widget.isActiveTab?.call() ?? true;
+
+  // Even revision-aware remote mutations remain gated until hosted rollout
+  // and separate screen approval. Legacy snapshots have no revision.
+  bool _canEditDelete(String id) =>
       _canWriteDocuments &&
-      (store.allowsLocalWrites || widget._allowConnectedEditDelete);
+      (store.allowsLocalWrites ||
+          (widget._allowConnectedEditDelete &&
+              (store.documentRevision(id) ?? 0) > 0));
 
   @override
   void didUpdateWidget(covariant DocumentsScreen oldWidget) {
@@ -122,8 +130,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               _DocumentCard(
                 key: ValueKey('document-card-${document.id}'),
                 document: document,
-                allowWrites: _canEditDelete,
-                allowEdits: _canEditDelete,
+                allowWrites: _canEditDelete(document.id),
+                allowEdits: _canEditDelete(document.id),
                 onTap: () => _showPreview(document),
                 onAction: (action) => _handleAction(action, document),
               ),
@@ -355,7 +363,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
   Future<void> _openDocumentForm([AppDocument? existing]) async {
     final activeStore = store;
-    if (!_canWriteDocuments || (existing != null && !_canEditDelete)) return;
+    if (!_ownsActiveTab ||
+        !_canWriteDocuments ||
+        (existing != null && !_canEditDelete(existing.id))) {
+      return;
+    }
     final current = existing == null
         ? null
         : activeStore.documentById(existing.id);
@@ -363,6 +375,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       _showMessage(RepositoryIssue.unavailable.message);
       return;
     }
+    final revisionAtDraftOpen = current == null
+        ? null
+        : activeStore.documentRevision(current.id);
     final message = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -378,6 +393,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       builder: (context) => _DocumentFormSheet(
         document: current,
         store: activeStore,
+        revisionAtDraftOpen: revisionAtDraftOpen,
+        isOwnerActive: () =>
+            mounted && identical(store, activeStore) && _ownsActiveTab,
         allowConnectedEditDelete: widget._allowConnectedEditDelete,
         onLateResult: (message) => _showMutationResult(activeStore, message),
       ),
@@ -387,12 +405,14 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
   Future<void> _confirmDelete(AppDocument document) async {
     final activeStore = store;
-    if (!_canEditDelete) return;
+    if (!_ownsActiveTab || !_canEditDelete(document.id)) return;
     final current = activeStore.documentById(document.id);
     if (current == null) {
       _showMessage(RepositoryIssue.unavailable.message);
       return;
     }
+    // Capture before opening the confirmation, never from a later snapshot.
+    final revisionBeforeConfirm = activeStore.documentRevision(document.id);
     final linkedApplications = activeStore.applications
         .where((application) => application.documentIds.contains(document.id))
         .toList();
@@ -438,8 +458,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     if (!mounted ||
         !identical(store, activeStore) ||
         ModalRoute.of(context)?.isCurrent != true ||
+        !_ownsActiveTab ||
         confirmed != true ||
-        !_canEditDelete) {
+        !_canEditDelete(document.id)) {
       return;
     }
     if (activeStore.documentById(document.id) == null) {
@@ -460,7 +481,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         _showMutationResult(activeStore, 'Metadata dokumen dihapus.');
         return;
       }
-      final result = await activeStore.deleteDocumentRemote(document.id);
+      if (revisionBeforeConfirm == null || revisionBeforeConfirm <= 0) return;
+      final result = await activeStore.deleteDocumentRemote(
+        document.id,
+        revisionBeforeConfirm,
+      );
       if (!mounted || !identical(store, activeStore)) return;
       if (!result.snapshotCurrent ||
           activeStore.documentById(result.receipt) != null) {
@@ -568,19 +593,20 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   void _showMutationResult(JobTrailStore activeStore, String message) {
-    // The shell's ScaffoldMessenger belongs to the account, not to a tab.
-    // A tab switch must not lose a result or pop the destination route.
+    // IndexedStack children share the shell route and ScaffoldMessenger.
+    // Suppress late feedback outside Documents; never notify the destination.
     if (!mounted ||
         !identical(store, activeStore) ||
         (activeStore.isConnected && !activeStore.hasSnapshot) ||
-        ModalRoute.of(context)?.isActive != true) {
+        !_ownsActiveTab ||
+        ModalRoute.of(context)?.isCurrent != true) {
       return;
     }
     _showMessage(message);
   }
 
   void _showMessage(String message) {
-    if (!mounted) return;
+    if (!mounted || !_ownsActiveTab) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -831,12 +857,16 @@ class _DocumentFormSheet extends StatefulWidget {
     required this.store,
     required this.onLateResult,
     required this.allowConnectedEditDelete,
+    required this.revisionAtDraftOpen,
+    required this.isOwnerActive,
   });
 
   final AppDocument? document;
   final JobTrailStore store;
   final ValueChanged<String> onLateResult;
   final bool allowConnectedEditDelete;
+  final int? revisionAtDraftOpen;
+  final bool Function() isOwnerActive;
 
   @override
   State<_DocumentFormSheet> createState() => _DocumentFormSheetState();
@@ -864,11 +894,20 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   bool get _creating => widget.document == null;
   bool get _canSubmit =>
       _canSaveDocuments(store) &&
-      (_creating || store.allowsLocalWrites || widget.allowConnectedEditDelete);
+      (_creating ||
+          store.allowsLocalWrites ||
+          (widget.allowConnectedEditDelete &&
+              (widget.revisionAtDraftOpen ?? 0) > 0 &&
+              (store.documentRevision(widget.document!.id) ?? 0) > 0));
   bool get _lockFields => _saving || _committed || _pendingCreate != null;
   bool get _routeCurrent =>
-      mounted && ModalRoute.of(context)?.isCurrent == true;
-  bool get _routeActive => mounted && ModalRoute.of(context)?.isActive == true;
+      mounted &&
+      widget.isOwnerActive() &&
+      ModalRoute.of(context)?.isCurrent == true;
+  bool get _routeActive =>
+      mounted &&
+      widget.isOwnerActive() &&
+      ModalRoute.of(context)?.isActive == true;
   String get _successMessage => _creating
       ? 'Metadata dokumen ditambahkan.'
       : 'Metadata dokumen diperbarui.';
@@ -1077,6 +1116,8 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 ),
                 const SizedBox(height: 8),
               ],
+              if (_needsReview && !_creating && store.isConnected)
+                _buildServerReview(),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -1128,10 +1169,47 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   String? _requiredValidator(String? value) =>
       value == null || value.trim().isEmpty ? 'Bagian ini wajib diisi.' : null;
 
+  Widget _buildServerReview() {
+    final ready =
+        store.hasSnapshot &&
+        !store.isRefreshing &&
+        !store.isMutating &&
+        (store.phase == StorePhase.ready || store.phase == StorePhase.empty);
+    final latest = ready ? store.documentById(widget.document!.id) : null;
+    final summary = !ready
+        ? 'Data server terbaru belum tersedia. Muat ulang untuk meninjau.'
+        : latest == null
+        ? 'Dokumen tidak tersedia pada snapshot terbaru.'
+        : 'Judul: ${latest.title}\n'
+              'Kategori: ${latest.category.label}\n'
+              'Nama file: ${latest.fileName}\n'
+              'Versi file: ${latest.version}\n'
+              'Catatan: ${latest.notes}\n'
+              'Revisi server: ${latest.revision ?? "-"}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Semantics(
+        liveRegion: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Tinjau metadata server'),
+            Text(summary, key: const ValueKey('document-server-review')),
+            const Text(
+              'Draft tidak diubah. Bandingkan isian, lalu tutup form dan '
+              'buka intent edit baru jika diperlukan.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   bool _sameDocument(AppDocument? a, AppDocument b) =>
       a != null &&
       a.id == b.id &&
       a.updatedAt == b.updatedAt &&
+      a.revision == b.revision &&
       a.title == b.title &&
       a.category == b.category &&
       a.fileName == b.fileName &&
@@ -1191,7 +1269,10 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     if (!_formKey.currentState!.validate()) return;
     final original = widget.document;
     if (original != null &&
-        !_sameDocument(store.documentById(original.id), original)) {
+        (!_sameDocument(store.documentById(original.id), original) ||
+            (store.isConnected &&
+                store.documentRevision(original.id) !=
+                    widget.revisionAtDraftOpen))) {
       setState(() {
         _needsReview = true;
         _saveError = RepositoryIssue.revisionConflict.message;
@@ -1240,6 +1321,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       final result = await activeStore.saveDocumentRemote(
         item,
         creating ? SaveMode.create : SaveMode.update,
+        expectedRevision: creating ? null : widget.revisionAtDraftOpen,
       );
       final message = !result.snapshotCurrent
           ? 'Metadata sudah disimpan di server, tetapi data terbaru '

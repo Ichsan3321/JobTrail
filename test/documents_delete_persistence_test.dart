@@ -13,6 +13,7 @@ import 'support/fake_jobtrail_repository.dart';
 final _instant = DateTime.utc(2026, 11, 25, 2);
 final _document = AppDocument(
   id: 'document-delete',
+  revision: 4,
   title: 'CV Delete QA',
   category: DocumentCategory.cvResume,
   fileName: 'cv_delete.pdf',
@@ -25,13 +26,13 @@ const _refresh = ValueKey('documents-delete-refresh');
 class _DeleteRepository extends FakeJobTrailRepository {
   _DeleteRepository() : super(() => throw StateError('Set read first'));
 
-  late FutureOr<String> Function(String) remove;
-  final calls = <String>[];
+  late FutureOr<String> Function(String, int) remove;
+  final calls = <(String, int)>[];
 
   @override
-  Future<String> deleteDocument(String id) async {
-    calls.add(id);
-    return remove(id);
+  Future<String> deleteDocument(String id, int expectedRevision) async {
+    calls.add((id, expectedRevision));
+    return remove(id, expectedRevision);
   }
 }
 
@@ -85,7 +86,7 @@ void main() {
     final repo = _DeleteRepository();
     final documents = [_document];
     repo.read = () => _snapshot(documents);
-    repo.remove = (id) {
+    repo.remove = (id, revision) {
       documents.removeWhere((item) => item.id == id);
       return id;
     };
@@ -98,23 +99,69 @@ void main() {
     expect(store.documents, hasLength(1));
     await _openDelete(tester);
     await _confirm(tester);
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.documents, isEmpty);
     expect(find.text('Metadata dokumen dihapus.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'delete captures revision before confirmation and never retries JT002',
+    (tester) async {
+      final repo = _DeleteRepository();
+      final documents = [_document];
+      final winner = AppDocument(
+        id: _document.id,
+        revision: 5,
+        title: 'CV Sesi Lain',
+        category: _document.category,
+        fileName: _document.fileName,
+        version: _document.version,
+        updatedAt: _instant,
+      );
+      repo.read = () => _snapshot(documents);
+      repo.remove = (id, revision) {
+        if (revision != documents.single.revision) {
+          throw const RepositoryFailure(RepositoryIssue.revisionConflict);
+        }
+        documents.clear();
+        return id;
+      };
+      final store = await _pumpDocuments(tester, repo);
+      await _openDelete(tester);
+      documents[0] = winner;
+      await store.refresh();
+      await tester.pumpAndSettle();
+      expect(store.documentRevision(_document.id), 5);
+      expect(repo.calls, isEmpty);
+      await _confirm(tester);
+      expect(repo.calls, [(_document.id, 4)]);
+      expect(store.documentById(_document.id), same(winner));
+      expect(
+        find.text(RepositoryIssue.revisionConflict.message),
+        findsOneWidget,
+      );
+      // Only a new explicit confirmation may capture revision 5.
+      await _openDelete(tester);
+      expect(repo.calls, [(_document.id, 4)]);
+      await _confirm(tester);
+      expect(repo.calls, [(_document.id, 4), (_document.id, 5)]);
+      expect(store.documents, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('server rejects a linked document even if snapshot is stale', (
     tester,
   ) async {
     final repo = _DeleteRepository();
     repo.read = () => _snapshot([_document]);
-    repo.remove = (_) =>
+    repo.remove = (_, _) =>
         throw const RepositoryFailure(RepositoryIssue.documentInUse);
     final store = await _pumpDocuments(tester, repo);
     await _openDelete(tester);
     await _confirm(tester);
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.documentById(_document.id), same(_document));
     expect(find.text(RepositoryIssue.documentInUse.message), findsOneWidget);
     expect(find.text('Metadata dokumen dihapus.'), findsNothing);
@@ -131,7 +178,7 @@ void main() {
       if (failRead) throw const RepositoryFailure(RepositoryIssue.network);
       return _snapshot(documents);
     };
-    repo.remove = (id) {
+    repo.remove = (id, revision) {
       documents.clear();
       failRead = true;
       return id;
@@ -139,7 +186,7 @@ void main() {
     final store = await _pumpDocuments(tester, repo);
     await _openDelete(tester);
     await _confirm(tester);
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.phase, StorePhase.error);
     expect(store.documentById(_document.id), isNotNull);
     expect(find.byKey(_refresh), findsOneWidget);
@@ -147,7 +194,7 @@ void main() {
     failRead = false;
     await tester.tap(find.byKey(_refresh));
     await tester.pumpAndSettle();
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.documents, isEmpty);
     expect(find.byKey(_refresh), findsNothing);
     expect(tester.takeException(), isNull);
@@ -159,7 +206,7 @@ void main() {
     final repo = _DeleteRepository();
     final documents = [_document];
     repo.read = () => _snapshot(documents);
-    repo.remove = (id) {
+    repo.remove = (id, revision) {
       if (repo.calls.length == 1) {
         throw const RepositoryFailure(
           RepositoryIssue.network,
@@ -172,19 +219,19 @@ void main() {
     final store = await _pumpDocuments(tester, repo);
     await _openDelete(tester);
     await _confirm(tester);
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(find.byKey(_refresh), findsOneWidget);
     expect(find.text('Metadata dokumen dihapus.'), findsNothing);
     final reads = repo.reads;
     await tester.tap(find.byKey(_refresh));
     await tester.pumpAndSettle();
     expect(repo.reads, greaterThan(reads));
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.documents, hasLength(1));
     await _openDelete(tester);
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     await _confirm(tester);
-    expect(repo.calls, [_document.id, _document.id]);
+    expect(repo.calls, [(_document.id, 4), (_document.id, 4)]);
     expect(store.documents, isEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -196,11 +243,11 @@ void main() {
     final documents = [_document];
     final response = Completer<String>();
     repo.read = () => _snapshot(documents);
-    repo.remove = (_) => response.future;
+    repo.remove = (_, _) => response.future;
     final store = await _pumpDocuments(tester, repo);
     await _openDelete(tester);
     await _confirm(tester);
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.isMutating, isTrue);
     await tester.tap(find.byKey(_menu));
     await tester.pumpAndSettle();
@@ -212,7 +259,7 @@ void main() {
     documents.clear();
     response.complete(_document.id);
     await tester.pumpAndSettle();
-    expect(repo.calls, [_document.id]);
+    expect(repo.calls, [(_document.id, 4)]);
     expect(store.documents, isEmpty);
     expect(tester.takeException(), isNull);
   });
