@@ -129,7 +129,7 @@ export async function hostedSession(config, fetchImpl = fetch) {
     }),
     async ownerRow(record) {
       requireThat(Object.hasOwn(recordSpec, record.table) && uuid(record.id), 'Fixture ID lookup rejected.');
-      const select = record.table === 'applications' ? 'id,user_id,notes,revision' : 'id,user_id,notes';
+      const select = 'id,user_id,notes,revision';
       const query = new URLSearchParams({ select, id: 'eq.' + record.id });
       const rows = await request('/rest/v1/' + record.table + '?' + query, {
         action: 'Owner row verification', token,

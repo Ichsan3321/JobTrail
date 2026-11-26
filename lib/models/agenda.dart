@@ -14,6 +14,7 @@ class Agenda {
     required this.scheduledAt,
     required this.locationOrLink,
     this.notes = '',
+    this.revision,
   });
   final String id;
   final String applicationId;
@@ -21,4 +22,7 @@ class Agenda {
   final DateTime scheduledAt;
   final String locationOrLink;
   final String notes;
+
+  /// Null for local records and snapshots from before the revision migration.
+  final int? revision;
 }

@@ -43,6 +43,11 @@ abstract final class JobTrailWire {
     return value;
   }
 
+  static int? entityRevision(WireObject row, {required bool required}) =>
+      required || row.containsKey('revision')
+      ? positiveInt(row['revision'])
+      : null;
+
   static bool flag(Object? value) {
     if (value is! bool) throw const FormatException('boolean');
     return value;
@@ -100,6 +105,11 @@ abstract final class JobTrailWire {
 
   static JobTrailSnapshot snapshot(Object? raw) {
     final root = object(raw);
+    final revisionsRequired = root.containsKey('entity_revision_version');
+    if (revisionsRequired &&
+        positiveInt(root['entity_revision_version']) != 1) {
+      throw const FormatException('unsupported entity revision contract');
+    }
     final referenceDate = date(root['reference_date']);
     final referenceInstant = instant(root['reference_instant']);
     if (AppDates.wibDate(referenceInstant) != referenceDate) {
@@ -117,6 +127,7 @@ abstract final class JobTrailWire {
             version: text(row['version']),
             updatedAt: instant(row['updated_at']),
             notes: text(row['notes']),
+            revision: entityRevision(row, required: revisionsRequired),
           ),
         )
         .toList();
@@ -170,6 +181,7 @@ abstract final class JobTrailWire {
             scheduledAt: instant(row['scheduled_at']),
             locationOrLink: text(row['location_or_link']),
             notes: text(row['notes']),
+            revision: entityRevision(row, required: revisionsRequired),
           ),
         )
         .toList();
