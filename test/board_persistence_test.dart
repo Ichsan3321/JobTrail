@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jobtrail/app.dart';
+import 'package:jobtrail/core/constants/app_tokens.dart';
 import 'package:jobtrail/core/routes/app_navigation.dart';
 import 'package:jobtrail/data/jobtrail_repository.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
@@ -352,5 +353,222 @@ void main() {
       find.byKey(const ValueKey('application-$receiptId')).hitTestable(),
       findsOneWidget,
     );
+  });
+
+  group('PR #18 review', () {
+    testWidgets('disabled Add looks and announces itself as unavailable', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await _openPreview(tester);
+      await tester.tap(find.byTooltip('Tutup'));
+      await tester.pumpAndSettle();
+
+      // Tooltip may merge its message into the label, so match by pattern.
+      expect(
+        tester.getSemantics(find.bySemanticsLabel(RegExp('Tambah Lamaran'))),
+        isSemantics(isButton: true, hasEnabledState: true, isEnabled: false),
+      );
+      final material = tester.widget<Material>(
+        find
+            .ancestor(
+              of: find.byKey(const ValueKey('board-add')),
+              matching: find.byType(Material),
+            )
+            .first,
+      );
+      expect(material.color, AppColors.border);
+      expect(find.byTooltip('Tambah lamaran belum tersedia'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('board-add')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('S04')), findsNothing);
+      semantics.dispose();
+    });
+
+    testWidgets('stale/error snapshot blocks Ubah Status until reloaded', (
+      tester,
+    ) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (id, _, _) => (id: id, revision: 8);
+      h.repo.read = () =>
+          throw const RepositoryFailure(RepositoryIssue.network);
+      await h.store.refresh();
+      await tester.pumpAndSettle();
+      expect(h.store.phase, StorePhase.error);
+
+      expect(find.textContaining('Data belum terbaru'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('board-preview-status')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('board-status-offering')), findsNothing);
+      expect(h.calls, isEmpty);
+
+      h.repo.read = _snapshot;
+      await tester.tap(find.byKey(const ValueKey('board-preview-retry')));
+      await tester.pumpAndSettle();
+      expect(h.store.phase, StorePhase.ready);
+      expect(find.byKey(const ValueKey('board-preview-notice')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('board-preview-status')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('board-status-offering')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a mutation already running elsewhere blocks Ubah Status', (
+      tester,
+    ) async {
+      final h = await _openPreview(tester);
+      final pending = Completer<ApplicationReceipt>();
+      h.onStatus = (_, _, _) => pending.future;
+      final other = h.store.changeStatusRemote(
+        _appId,
+        7,
+        RecruitmentStatus.screening,
+      );
+      await tester.pump();
+      expect(h.store.isMutating, isTrue);
+
+      await tester.tap(
+        find.byKey(const ValueKey('board-preview-status')),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('board-status-offering')), findsNothing);
+      expect(h.calls, hasLength(1), reason: 'only the other mutation');
+
+      h.repo.read = () =>
+          _snapshot(status: RecruitmentStatus.screening, revision: 8);
+      pending.complete((id: _appId, revision: 8));
+      await other;
+      await tester.pumpAndSettle();
+      expect(find.text('Ubah Status'), findsOneWidget);
+    });
+
+    testWidgets('conflict with a failed reconcile does not claim latest data', (
+      tester,
+    ) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (_, _, _) {
+        h.repo.read = () =>
+            throw const RepositoryFailure(RepositoryIssue.network);
+        throw const RepositoryFailure(RepositoryIssue.revisionConflict);
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+
+      expect(h.store.phase, StorePhase.error);
+      expect(find.textContaining('versi terbaru dari server'), findsNothing);
+      expect(
+        find.textContaining('versi terbaru belum berhasil dimuat'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('board-preview-retry')), findsOneWidget);
+    });
+
+    testWidgets('unknown outcome with a failed reconcile does not point at '
+        'stale data', (tester) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (_, _, _) {
+        h.repo.read = () =>
+            throw const RepositoryFailure(RepositoryIssue.network);
+        throw const RepositoryFailure(
+          RepositoryIssue.network,
+          writeOutcomeUnknown: true,
+        );
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Periksa status terbaru di atas'),
+        findsNothing,
+      );
+      expect(find.textContaining('belum berhasil dimuat'), findsOneWidget);
+    });
+
+    testWidgets('committed notice clears once the follow-up reload succeeds', (
+      tester,
+    ) async {
+      final h = await _openPreview(tester);
+      var readsAfterWrite = 0;
+      h.onStatus = (id, _, _) {
+        h.repo.read = () {
+          readsAfterWrite++;
+          if (readsAfterWrite == 1) {
+            throw const RepositoryFailure(RepositoryIssue.network);
+          }
+          return _snapshot(status: RecruitmentStatus.offering, revision: 8);
+        };
+        return (id: id, revision: 8);
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+
+      expect(readsAfterWrite, 2, reason: 'failed reconcile + reload');
+      expect(h.calls, hasLength(1), reason: 'never written twice');
+      expect(find.byKey(const ValueKey('board-preview-notice')), findsNothing);
+      expect(_previewChip(RecruitmentStatus.offering), findsOneWidget);
+    });
+
+    testWidgets('committed notice offers retry while reload keeps failing', (
+      tester,
+    ) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (id, _, _) {
+        h.repo.read = () =>
+            throw const RepositoryFailure(RepositoryIssue.network);
+        return (id: id, revision: 8);
+      };
+
+      await _pickStatus(tester, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Status tersimpan di server, tetapi data belum termuat.'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('board-preview-retry')), findsOneWidget);
+
+      h.repo.read = () =>
+          _snapshot(status: RecruitmentStatus.offering, revision: 8);
+      await tester.tap(find.byKey(const ValueKey('board-preview-retry')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('board-preview-notice')), findsNothing);
+      expect(h.calls, hasLength(1));
+    });
+
+    testWidgets('no dispatch when the preview is no longer the current route '
+        'after the picker closes', (tester) async {
+      final h = await _openPreview(tester);
+      h.onStatus = (id, _, _) => fail('must not dispatch from a covered route');
+
+      await tester.tap(find.byKey(const ValueKey('board-preview-status')));
+      await tester.pumpAndSettle();
+      final pickerContext = tester.element(
+        find.byKey(const ValueKey('board-status-offering')),
+      );
+      final pickerRoute = ModalRoute.of(pickerContext)!;
+      final navigator = Navigator.of(pickerContext);
+
+      // Something else (e.g. an account/route change) lands on top...
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: Text('Other route')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // ...and the picker is then resolved with a status underneath it.
+      navigator.removeRoute(pickerRoute, RecruitmentStatus.offering);
+      await tester.pumpAndSettle();
+
+      expect(h.calls, isEmpty);
+      expect(find.text('Other route'), findsOneWidget);
+    });
   });
 }

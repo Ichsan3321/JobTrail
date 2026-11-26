@@ -323,19 +323,34 @@ class _Header extends StatelessWidget {
         ),
       ),
       const SizedBox(width: AppSpacing.sm),
+      // Persistent Add stays gated until S04 is integrated; when disabled the
+      // button must look and announce itself as unavailable.
       Tooltip(
-        message: 'Tambah Lamaran',
-        child: Material(
-          color: AppColors.primary,
-          borderRadius: BorderRadius.circular(AppRadius.button),
-          child: InkWell(
-            key: const ValueKey('board-add'),
+        message: onAdd == null
+            ? 'Tambah lamaran belum tersedia'
+            : 'Tambah Lamaran',
+        child: Semantics(
+          button: true,
+          enabled: onAdd != null,
+          label: 'Tambah Lamaran',
+          onTap: onAdd,
+          excludeSemantics: true,
+          child: Material(
+            color: onAdd == null ? AppColors.border : AppColors.primary,
             borderRadius: BorderRadius.circular(AppRadius.button),
-            onTap: onAdd,
-            child: const SizedBox(
-              width: kMinInteractiveDimension,
-              height: kMinInteractiveDimension,
-              child: Icon(Icons.add, color: AppColors.white, size: 22),
+            child: InkWell(
+              key: const ValueKey('board-add'),
+              borderRadius: BorderRadius.circular(AppRadius.button),
+              onTap: onAdd,
+              child: SizedBox(
+                width: kMinInteractiveDimension,
+                height: kMinInteractiveDimension,
+                child: Icon(
+                  Icons.add,
+                  color: onAdd == null ? AppColors.gray : AppColors.white,
+                  size: 22,
+                ),
+              ),
             ),
           ),
         ),
