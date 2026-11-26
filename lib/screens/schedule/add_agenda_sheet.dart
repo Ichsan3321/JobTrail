@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants/app_dates.dart';
 import '../../core/constants/app_tokens.dart';
+import '../../data/jobtrail_repository.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/agenda.dart';
 import '../../models/application.dart';
@@ -95,7 +96,16 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
   bool _submitted = false;
   String? _error;
 
+  /// Create intent: one ID per payload, allocated on the first submit.
+  String? _agendaId;
+
+  /// Payload whose server outcome is unknown. While set, the form is locked
+  /// and a retry resends this exact immutable agenda (same ID and payload).
+  Agenda? _pending;
+  bool _saving = false;
+
   JobTrailStore get store => widget.store;
+  bool get _locked => _saving || _pending != null;
 
   @override
   void initState() {
@@ -127,9 +137,16 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
       _notes.text.trim().isNotEmpty;
 
   Future<void> _handlePop(bool didPop) async {
-    if (didPop) return;
+    // A request in flight cannot be cancelled; keep the sheet until it settles.
+    if (didPop || _saving) return;
     final navigator = Navigator.of(context);
-    if (!_dirty || await _confirmDiscard()) navigator.pop();
+    final uncertain = _pending != null;
+    if (!_dirty || await _confirmDiscard()) {
+      if (!mounted || _saving) return;
+      // The unknown write may have committed; let the schedule reconcile.
+      if (uncertain) store.refresh();
+      navigator.pop();
+    }
   }
 
   Future<bool> _confirmDiscard() async {
@@ -142,7 +159,10 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
           style: _text(17, weight: FontWeight.w700),
         ),
         content: Text(
-          'Data yang sudah diisi belum disimpan dan akan hilang.',
+          _pending != null
+              ? 'Status penyimpanan agenda ini belum pasti. Jika ditutup, '
+                    'periksa daftar jadwal setelah data dimuat ulang.'
+              : 'Data yang sudah diisi belum disimpan dan akan hilang.',
           style: _text(14, color: AppColors.gray),
         ),
         actions: [
@@ -247,35 +267,160 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
     return null;
   }
 
-  void _save() {
-    setState(() {
-      _submitted = true;
-      _error = null;
-    });
-    if (!_formKey.currentState!.validate()) return;
-    final time = _time!;
+  static const _parentMissing =
+      'Lamaran terkait sudah tidak tersedia. Pilih lamaran lain.';
+  static const _outcomeUnknown =
+      'Status penyimpanan belum pasti. Ketuk "Kirim ulang" untuk mengirim '
+      'agenda yang sama; agenda tidak akan tergandakan.';
+  // JT004: the client ID is not this account's record (an identical retry on
+  // an own row replays instead), so nothing was saved under this intent.
+  static const _createConflict =
+      'Agenda belum tersimpan. Ketuk Simpan untuk mencoba lagi.';
+
+  Future<void> _save() async {
+    if (_saving) return;
+    var agenda = _pending;
+    if (agenda == null) {
+      setState(() {
+        _submitted = true;
+        _error = null;
+      });
+      if (!_formKey.currentState!.validate()) return;
+      final time = _time!;
+      agenda = Agenda(
+        id: _agendaId ??= store.nextAgendaId(),
+        applicationId: _appId!,
+        type: _type!,
+        scheduledAt: ScheduleFormat.parseWib(_date!, time.hour, time.minute),
+        locationOrLink: _location.text.trim(),
+        notes: _notes.text.trim(),
+      );
+    }
+    if (store.isConnected) {
+      await _saveRemote(agenda);
+    } else {
+      _saveLocal(agenda);
+    }
+  }
+
+  /// Mock mode: in-memory store, synchronous.
+  void _saveLocal(Agenda agenda) {
     try {
-      final id = store.nextAgendaId();
-      store.saveAgenda(
-        Agenda(
-          id: id,
-          applicationId: _appId!,
-          type: _type!,
-          scheduledAt: ScheduleFormat.parseWib(_date!, time.hour, time.minute),
-          locationOrLink: _location.text.trim(),
-          notes: _notes.text.trim(),
-        ),
-      );
-      Navigator.of(context).pop(id);
+      store.saveAgenda(agenda);
+      Navigator.of(context).pop(agenda.id);
     } on StateError {
-      setState(
-        () => _error =
-            'Lamaran terkait sudah tidak tersedia. Pilih lamaran lain.',
-      );
+      setState(() => _error = _parentMissing);
     } on ArgumentError catch (e) {
       setState(
         () => _error = 'Agenda tidak dapat disimpan. ${e.message ?? ''}'.trim(),
       );
+    }
+  }
+
+  /// Backend mode: `saveAgendaRemote` with an explicit create, then the
+  /// receipt. The same immutable [agenda] is resent while the outcome of an
+  /// earlier attempt is unknown, so the server can replay it idempotently.
+  Future<void> _saveRemote(Agenda agenda) async {
+    if (store.applicationById(agenda.applicationId) == null) {
+      // The parent left the snapshot, so a committed agenda was cascaded too.
+      _discardIntent(_parentMissing);
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final result = await store.saveAgendaRemote(agenda, SaveMode.create);
+      if (!mounted) return;
+      _finishSaved(
+        result.receipt.id,
+        messenger,
+        current: result.snapshotCurrent,
+      );
+    } on RepositoryFailure catch (failure) {
+      if (!mounted) return;
+      _handleFailure(agenda, failure, messenger);
+    } catch (_) {
+      if (!mounted) return;
+      _handleFailure(
+        agenda,
+        const RepositoryFailure(
+          RepositoryIssue.unexpected,
+          writeOutcomeUnknown: true,
+        ),
+        messenger,
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _handleFailure(
+    Agenda agenda,
+    RepositoryFailure failure,
+    ScaffoldMessengerState? messenger,
+  ) {
+    // The store reconciled before rethrowing an ambiguous write; a committed
+    // create is visible in the snapshot by its client ID.
+    if (failure.writeOutcomeUnknown &&
+        store.agendas.any((item) => item.id == agenda.id)) {
+      _finishSaved(agenda.id, messenger, current: true);
+      return;
+    }
+    switch (failure.issue) {
+      case RepositoryIssue.busy:
+        // Nothing was sent; keep the current intent as it is.
+        setState(() => _error = failure.issue.message);
+      case _
+          when failure.writeOutcomeUnknown ||
+              failure.issue == RepositoryIssue.network:
+        // Retrying a create with the original ID and payload is safe.
+        setState(() {
+          _pending = agenda;
+          _error = _outcomeUnknown;
+        });
+      case RepositoryIssue.unavailable:
+        _discardIntent(_parentMissing);
+      case RepositoryIssue.createConflict:
+        _discardIntent(_createConflict);
+      default:
+        _discardIntent(failure.issue.message);
+    }
+  }
+
+  /// A definitive rejection: nothing was stored under this intent, so the
+  /// user may edit and the next submit becomes a new intent with a new ID.
+  void _discardIntent(String message) => setState(() {
+    _pending = null;
+    _agendaId = null;
+    _error = message;
+  });
+
+  void _finishSaved(
+    String id,
+    ScaffoldMessengerState? messenger, {
+    required bool current,
+  }) {
+    _pending = null;
+    if (!current) {
+      // Committed on the server: never resend it, only reload the snapshot.
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            key: ValueKey('agenda-saved-stale'),
+            content: Text(
+              'Agenda tersimpan di server, tetapi data terbaru belum '
+              'termuat. Memuat ulang…',
+            ),
+          ),
+        );
+      store.refresh();
+    }
+    if (ModalRoute.of(context)?.isCurrent ?? false) {
+      Navigator.of(context).pop(id);
     }
   }
 
@@ -334,6 +479,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
                         TextFormField(
                           key: const ValueKey('agenda-location'),
                           controller: _location,
+                          readOnly: _locked,
                           textInputAction: TextInputAction.next,
                           style: _text(14),
                           decoration: _decoration(
@@ -351,6 +497,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
                         TextFormField(
                           key: const ValueKey('agenda-notes'),
                           controller: _notes,
+                          readOnly: _locked,
                           minLines: 2,
                           maxLines: 4,
                           style: _text(14),
@@ -405,7 +552,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
       IconButton(
         key: const ValueKey('agenda-close'),
         tooltip: 'Tutup',
-        onPressed: () => Navigator.maybePop(context),
+        onPressed: _saving ? null : () => Navigator.maybePop(context),
         style: IconButton.styleFrom(
           backgroundColor: AppColors.background,
           minimumSize: const Size(44, 44),
@@ -502,7 +649,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
                 ),
               ),
           ],
-          onChanged: _eligible.isEmpty ? null : _setApp,
+          onChanged: _eligible.isEmpty || _locked ? null : _setApp,
           validator: (value) => value == null ? 'Pilih lamaran terkait' : null,
         ),
       ),
@@ -586,13 +733,15 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           key: ValueKey('agenda-type-${type.name}'),
-          onTap: () {
-            setState(() {
-              _type = type;
-              _error = null;
-            });
-            _revalidate();
-          },
+          onTap: _locked
+              ? null
+              : () {
+                  setState(() {
+                    _type = type;
+                    _error = null;
+                  });
+                  _revalidate();
+                },
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 44),
             child: Padding(
@@ -645,7 +794,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
         value: semanticValue ?? value ?? 'belum dipilih',
         child: InkWell(
           key: key,
-          onTap: onTap,
+          onTap: _locked ? null : onTap,
           borderRadius: BorderRadius.circular(AppRadius.button),
           child: InputDecorator(
             isEmpty: value == null,
@@ -776,7 +925,7 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
           flex: 2,
           child: OutlinedButton(
             key: const ValueKey('agenda-cancel'),
-            onPressed: () => Navigator.maybePop(context),
+            onPressed: _saving ? null : () => Navigator.maybePop(context),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(44, 48),
               padding: padding,
@@ -790,16 +939,42 @@ class _AddAgendaSheetState extends State<AddAgendaSheet> {
         const SizedBox(width: AppSpacing.sm),
         Expanded(
           flex: 3,
-          child: FilledButton(
-            key: const ValueKey('agenda-save'),
-            onPressed: _eligible.isEmpty ? null : _save,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(44, 48),
-              padding: padding,
-              backgroundColor: AppColors.primary,
-              shape: shape,
+          // Rebuilds on store.isMutating so another write blocks a submit.
+          child: ListenableBuilder(
+            listenable: store,
+            builder: (context, _) => FilledButton(
+              key: const ValueKey('agenda-save'),
+              onPressed: _eligible.isEmpty || _saving || store.isMutating
+                  ? null
+                  : _save,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(44, 48),
+                padding: padding,
+                backgroundColor: AppColors.primary,
+                shape: shape,
+              ),
+              child: _saving
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.gray,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Flexible(
+                          child: _actionLabel('Menyimpan…', AppColors.gray),
+                        ),
+                      ],
+                    )
+                  : _actionLabel(
+                      _pending != null ? 'Kirim ulang' : 'Simpan Agenda',
+                      AppColors.white,
+                    ),
             ),
-            child: _actionLabel('Simpan Agenda', AppColors.white),
           ),
         ),
       ],

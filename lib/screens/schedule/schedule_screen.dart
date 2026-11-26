@@ -72,6 +72,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   JobTrailStore get store => widget.store;
 
+  /// Mock writes in memory; backend creates via `saveAgendaRemote` once a
+  /// snapshot exists (the sheet lists applications from that snapshot).
+  bool get _canAdd =>
+      store.allowsLocalWrites || (store.isConnected && store.hasSnapshot);
+
   /// Opens the add sheet prefilled with the selected date (week view) or the
   /// related application (Agenda Terkait view), then focuses the new agenda.
   Future<void> _openAddSheet() async {
@@ -268,7 +273,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             child: InkWell(
               key: const ValueKey('schedule-add'),
               borderRadius: BorderRadius.circular(AppRadius.button),
-              onTap: widget.store.allowsLocalWrites ? _openAddSheet : null,
+              onTap: _canAdd ? _openAddSheet : null,
               child: const SizedBox(
                 width: 48,
                 height: 48,
@@ -824,7 +829,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             const SizedBox(height: AppSpacing.md),
             FilledButton(
               key: const ValueKey('schedule-empty-add'),
-              onPressed: widget.store.allowsLocalWrites ? _openAddSheet : null,
+              onPressed: _canAdd ? _openAddSheet : null,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 minimumSize: const Size(180, 48),
