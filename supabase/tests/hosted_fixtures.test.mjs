@@ -17,7 +17,8 @@ const env = {
   JOBTRAIL_QA_EMAIL: owner.email,
 };
 const snapshot = () => ({
-  ...clock, applications: [], agendas: [], documents: [], history: [], application_documents: [],
+  ...clock, entity_revision_version: 1,
+  applications: [], agendas: [], documents: [], history: [], application_documents: [],
 });
 const clone = value => structuredClone(value);
 
@@ -42,6 +43,7 @@ function localSession() {
       name.includes('agenda') ? 'agendas' : 'applications';
     if (name.startsWith('delete')) {
       assert.ok(row(table, args.p_id), 'Delete cannot target absent ID');
+      assert.equal(args.p_expected_revision, row(table, args.p_id).revision);
       data[table] = data[table].filter(item => item.id !== args.p_id);
       if (table === 'applications') {
         data.history = data.history.filter(item => item.application_id !== args.p_id);
@@ -52,7 +54,7 @@ function localSession() {
     const replayed = Boolean(row(table, args.p_id));
     if (!replayed) {
       const saved = rowPayload({ args });
-      data[table].push(table === 'applications' ? { ...saved, revision: 1 } : saved);
+      data[table].push({ ...saved, revision: 1 });
       if (table === 'applications') {
         data.history.push({ id: randomUUID(), application_id: args.p_id, event_no: 1, status: args.p_status });
         for (const document_id of args.p_document_ids) {
@@ -270,6 +272,8 @@ test('cleanup skips missing fixtures, uses current revision, and preserves unrel
   server.data.applications.push(unrelated);
   server.data.agendas.shift();
   server.data.applications[0].revision = 3;
+  server.data.agendas[0].revision = 4;
+  server.data.documents[0].revision = 5;
   const oldCallCount = server.calls.length;
   const report = await cleanupRun(server, storage.value, storage.persist);
   assert.deepEqual(report, { status: 'PASS', remaining: 0 });
@@ -278,10 +282,64 @@ test('cleanup skips missing fixtures, uses current revision, and preserves unrel
     ...Array(2).fill('delete_agenda'), ...Array(6).fill('delete_application'), 'delete_document',
   ]);
   assert.equal(deletes[2][1].p_expected_revision, 3);
+  assert.equal(deletes[0][1].p_expected_revision, 4);
+  assert.equal(deletes.at(-1)[1].p_expected_revision, 5);
   assert.deepEqual(server.data.applications, [unrelated]);
   assert.equal(server.data.history.length + server.data.application_documents.length, 0);
   assert.deepEqual(await cleanupRun(server, storage.value, storage.persist), report);
   await assert.rejects(create(server, storage, 'standard', storage.value), /cleanup attempt/);
+});
+
+test('existing v1 manifests remain readable, but writes require the migrated contract', async () => {
+  const server = localSession();
+  const storage = persistence();
+  await create(server, storage, 'detail');
+  const manifest = validateManifest(storage.value, run);
+  assert.equal(manifest.version, 1);
+  const oldCallCount = server.calls.length;
+  delete server.data.entity_revision_version;
+  for (const row of [...server.data.documents, ...server.data.agendas]) delete row.revision;
+  assert.equal((await verifyRun(server, manifest, storage.persist)).status, 'PASS');
+  await assert.rejects(create(server, storage, 'detail', manifest), /revision migration/);
+  await assert.rejects(cleanupRun(server, manifest, storage.persist), /revision migration/);
+  assert.equal(storage.value.cleanup, 'PENDING');
+  assert.equal(server.calls.length, oldCallCount);
+
+  server.data.entity_revision_version = 1;
+  await assert.rejects(verifyRun(server, manifest, storage.persist), /Invalid snapshot rows/);
+  for (const row of [...server.data.documents, ...server.data.agendas]) row.revision = 1;
+  assert.deepEqual(await cleanupRun(server, manifest, storage.persist), { status: 'PASS', remaining: 0 });
+});
+
+test('cleanup stops on revision changes before dispatch and on server stale rejection', async () => {
+  for (const changeBeforeDispatch of [true, false]) {
+    const server = localSession();
+    const storage = persistence();
+    await create(server, storage, 'detail');
+    const oldCallCount = server.calls.length;
+    const agenda = server.data.agendas[0];
+    if (changeBeforeDispatch) {
+      let reads = 0;
+      const read = server.snapshot;
+      server.snapshot = () => {
+        if (++reads === 2) agenda.revision++;
+        return read();
+      };
+    } else {
+      server.setFailure((rpc, args) => {
+        assert.equal(rpc, 'delete_agenda');
+        assert.equal(args.p_expected_revision, 1);
+        agenda.revision++;
+        throw Object.assign(new FixtureError('JT002'), { definite: true });
+      });
+    }
+    const report = await cleanupRun(server, storage.value, storage.persist);
+    assert.equal(report.status, changeBeforeDispatch ? 'FAIL' : 'PARTIAL CLEANUP');
+    assert.equal(server.calls.length - oldCallCount, changeBeforeDispatch ? 0 : 1);
+    assert.equal(server.data.agendas[0].revision, 2);
+    assert.equal(server.data.documents.length, 1);
+    assert.equal(server.data.applications.length, 2);
+  }
 });
 
 test('ambiguous delete stays partial until reconciled, then verifies absence', async () => {

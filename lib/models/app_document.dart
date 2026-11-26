@@ -16,6 +16,7 @@ class AppDocument {
     required this.version,
     required this.updatedAt,
     this.notes = '',
+    this.revision,
   });
   final String id;
   final String title;
@@ -24,4 +25,7 @@ class AppDocument {
   final String version;
   final DateTime updatedAt;
   final String notes;
+
+  /// Server revision, separate from the file's user-supplied version label.
+  final int? revision;
 }

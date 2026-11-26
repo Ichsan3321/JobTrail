@@ -14,6 +14,11 @@ dengan konfigurasi mock.
 - Tangkap `applicationRevision(id)` ketika membuka draft/status/hapus. Saat submit
   kirim revisi itu ke metode remote. Jangan menggantinya secara otomatis dengan
   revisi terbaru. Saat konflik, pertahankan draft dan tampilkan perubahan server.
+- Agenda dan dokumen menangkap `agendaRevision(id)` atau
+  `documentRevision(id)` saat draft dibuka atau sebelum konfirmasi hapus.
+  Kirim revisi itu saat update/delete. Pertahankan gate hosted sampai migrasi
+  dan UI lulus review serta verifikasi. Lihat
+  [kontrak dan handoff revisi](ENTITY_REVISION_CONTRACT.md).
 - Buat `ApplicationCreation(draft)` sekali untuk intent tambah. Untuk agenda dan
   dokumen, gunakan `nextAgendaId()` / `nextDocumentId()` sekali dan pertahankan
   model immutable yang sama selama retry create yang ambigu. Gunakan

@@ -62,8 +62,19 @@ export const recordSpec = {
   applications: { label: 'application', create: 'create_application', remove: 'delete_application' },
   agendas: { label: 'agenda', create: 'save_agenda', remove: 'delete_agenda' },
 };
+export const validRevision = value => Number.isInteger(value) && value > 0 && value <= 2147483647;
+
+export function requireEntityRevisionContract(snapshot) {
+  requireThat(snapshot.entity_revision_version === 1,
+    'Entity revision migration is required before fixture writes. Keep the manifest and verify the target contract.');
+}
+
 export function validateSnapshot(snapshot) {
   validateClock(snapshot);
+  const versioned = Object.hasOwn(snapshot, 'entity_revision_version');
+  if (versioned) requireEntityRevisionContract(snapshot);
+  const hasValidEntityRevision = row => (versioned || Object.hasOwn(row, 'revision'))
+    ? validRevision(row.revision) : true;
   for (const collection of COLLECTIONS) {
     const rows = snapshot[collection];
     requireThat(Array.isArray(rows) && rows.every(row =>
@@ -76,9 +87,10 @@ export function validateSnapshot(snapshot) {
     requireThat(new Set(ids).size === rows.length, 'Snapshot contains duplicate identifiers.');
   }
   requireThat(snapshot.applications.every(row => date(row.applied_on) && statuses.includes(row.status) &&
-    Number.isInteger(row.revision) && row.revision > 0) &&
+    validRevision(row.revision)) &&
     snapshot.agendas.every(row => uuid(row.application_id) && instant(row.scheduled_at) &&
-      ['interview', 'test'].includes(row.type)) &&
+      ['interview', 'test'].includes(row.type) && hasValidEntityRevision(row)) &&
+    snapshot.documents.every(hasValidEntityRevision) &&
     snapshot.history.every(row => uuid(row.application_id) && statuses.includes(row.status) &&
       Number.isInteger(row.event_no) && row.event_no > 0),
   'Invalid snapshot rows.');

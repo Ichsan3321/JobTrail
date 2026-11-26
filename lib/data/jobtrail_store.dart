@@ -98,6 +98,8 @@ class JobTrailStore extends ChangeNotifier {
   bool get isRefreshing => _refresh != null;
   bool get hasSnapshot => _serverInstant != null;
   int? applicationRevision(String id) => _revisions[id];
+  int? agendaRevision(String id) => _agendas[id]?.revision;
+  int? documentRevision(String id) => _documents[id]?.revision;
 
   void _requireLocal() {
     if (!allowsLocalWrites) {
@@ -229,19 +231,29 @@ class JobTrailStore extends ChangeNotifier {
 
   Future<CommittedMutation<AgendaReceipt>> saveAgendaRemote(
     Agenda item,
-    SaveMode mode,
-  ) => _mutate((repo) => repo.saveAgenda(item, mode));
+    SaveMode mode, {
+    int? expectedRevision,
+  }) => _mutate(
+    (repo) => repo.saveAgenda(item, mode, expectedRevision: expectedRevision),
+  );
 
-  Future<CommittedMutation<String>> deleteAgendaRemote(String id) =>
-      _mutate((repo) => repo.deleteAgenda(id));
+  Future<CommittedMutation<String>> deleteAgendaRemote(
+    String id,
+    int expectedRevision,
+  ) => _mutate((repo) => repo.deleteAgenda(id, expectedRevision));
 
   Future<CommittedMutation<DocumentReceipt>> saveDocumentRemote(
     AppDocument item,
-    SaveMode mode,
-  ) => _mutate((repo) => repo.saveDocument(item, mode));
+    SaveMode mode, {
+    int? expectedRevision,
+  }) => _mutate(
+    (repo) => repo.saveDocument(item, mode, expectedRevision: expectedRevision),
+  );
 
-  Future<CommittedMutation<String>> deleteDocumentRemote(String id) =>
-      _mutate((repo) => repo.deleteDocument(id));
+  Future<CommittedMutation<String>> deleteDocumentRemote(
+    String id,
+    int expectedRevision,
+  ) => _mutate((repo) => repo.deleteDocument(id, expectedRevision));
 
   @override
   void dispose() {
@@ -276,6 +288,7 @@ class JobTrailStore extends ChangeNotifier {
   WeeklyGoal get weeklyGoal => _weeklyGoal;
   Application? applicationById(String id) => _applications[id];
   AppDocument? documentById(String id) => _documents[id];
+  Agenda? agendaById(String id) => _agendas[id];
 
   /// Session-unique IDs for new agenda/document metadata; keep the ID on edit.
   String nextAgendaId() => isConnected ? newRecordId() : _newId('agenda');
