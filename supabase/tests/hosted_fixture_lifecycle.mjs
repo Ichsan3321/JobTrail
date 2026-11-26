@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
   ACCOUNTS, COLLECTIONS, FixtureError, PROJECT, fixtureSnapshot, makePlan, matchPayload,
-  metrics, recordSpec, requireThat, uuid, validateSnapshot,
+  metrics, recordSpec, requireEntityRevisionContract, requireThat, uuid, validateSnapshot,
 } from './hosted_fixture_plan.mjs';
 
 const attempts = ['PENDING', 'IN_FLIGHT', 'CONFIRMED', 'REJECTED', 'UNCERTAIN'];
@@ -126,7 +126,7 @@ export function verificationReport(snapshot, manifest) {
     const row = rowFor(scoped, record);
     if (!row) missing.push(record.label);
     else if (!matchPayload(record, row, snapshot) ||
-        (record.table === 'applications' && row.revision !== 1)) changed.push(record.label);
+        (row.revision !== undefined && row.revision !== 1)) changed.push(record.label);
   }
   const baselineComparison = metrics(scoped, manifest.clock);
   const historiesMatch = scoped.history.length === scoped.applications.length &&
@@ -163,6 +163,7 @@ export async function verifyRun(session, manifest, persist) {
 export async function createRun(session, { manifest, runId, profile, persist, settled = false }) {
   const owner = await identify(session, manifest);
   const snapshot = await readSnapshot(session);
+  requireEntityRevisionContract(snapshot);
   if (!manifest) {
     manifest = newManifest(runId, profile, owner, snapshot);
     await persist(manifest);
@@ -178,9 +179,11 @@ export async function createRun(session, { manifest, runId, profile, persist, se
     if (existing) {
       requireThat((manifest.creates[record.id] === 'CONFIRMED' || unsettled(manifest.creates[record.id])) &&
         matchPayload(record, existing, snapshot) &&
-        (record.table !== 'applications' || existing.revision === 1) &&
-        matchingOwner(await session.ownerRow(record), record, owner),
+        existing.revision === 1,
       'Create refused an unexpected existing fixture ID.');
+      const checked = await session.ownerRow(record);
+      requireThat(matchingOwner(checked, record, owner) && checked.revision === existing.revision,
+        'Create refused an unexpected existing fixture owner or revision.');
     } else {
       requireThat(manifest.creates[record.id] !== 'CONFIRMED',
         'Previously confirmed fixture is absent. Creation stopped to prevent recreation.');
@@ -198,7 +201,7 @@ export async function createRun(session, { manifest, runId, profile, persist, se
     try {
       const receipt = await session.mutate(recordSpec[record.table].create, record.args);
       requireThat(receipt?.id === record.id && typeof receipt.replayed === 'boolean' &&
-        (record.table !== 'applications' || receipt.revision === 1),
+        receipt.revision === 1,
       'Create receipt inconsistent. Write outcome unknown.');
       manifest.creates[record.id] = 'CONFIRMED';
     } catch (error) {
@@ -248,10 +251,11 @@ function remainingCount(snapshot, records) {
 
 export async function cleanupRun(session, manifest, persist, { settled = false } = {}) {
   const identity = await identify(session, manifest);
+  let snapshot = await readSnapshot(session);
+  requireEntityRevisionContract(snapshot);
   let started = Object.values(manifest.deletes).some(status => status !== 'PENDING');
   try {
     requireSettled(manifest, settled);
-    let snapshot = await readSnapshot(session);
     const wasClean = manifest.cleanup === 'PASS';
     if (wasClean) {
       requireThat(remainingCount(snapshot, manifest.plan.records) === 0,
@@ -259,14 +263,20 @@ export async function cleanupRun(session, manifest, persist, { settled = false }
       return { status: 'PASS', remaining: 0 };
     }
     preflight(snapshot, manifest);
-    for (const record of manifest.plan.records.filter(record => rowFor(snapshot, record))) {
-      requireThat(matchingOwner(await session.ownerRow(record), record, identity),
-        'Cleanup refused ownership or marker mismatch.');
+    const revisions = new Map();
+    for (const record of manifest.plan.records) {
+      const row = rowFor(snapshot, record);
+      if (!row) continue;
+      const checked = await session.ownerRow(record);
+      requireThat(matchingOwner(checked, record, identity) && checked.revision === row.revision,
+        'Cleanup refused ownership, marker or revision mismatch.');
+      revisions.set(record.id, row.revision);
     }
 
     for (const table of cleanupOrder) {
       for (const record of manifest.plan.records.filter(record => record.table === table)) {
         snapshot = await readSnapshot(session);
+        requireEntityRevisionContract(snapshot);
         preflight(snapshot, manifest);
         const row = rowFor(snapshot, record);
         if (!row) {
@@ -275,12 +285,12 @@ export async function cleanupRun(session, manifest, persist, { settled = false }
           continue;
         }
         const checked = await session.ownerRow(record);
-        requireThat(matchingOwner(checked, record, identity) &&
-          (table !== 'applications' || checked.revision === row.revision),
+        const revision = revisions.get(record.id);
+        requireThat(row.revision === revision && matchingOwner(checked, record, identity) &&
+          checked.revision === revision,
         'Cleanup refused a changed record between reads.');
         if (unsettled(manifest.creates[record.id])) manifest.creates[record.id] = 'CONFIRMED';
-        const args = { p_id: record.id };
-        if (table === 'applications') args.p_expected_revision = row.revision;
+        const args = { p_id: record.id, p_expected_revision: revision };
         manifest.cleanup = 'PARTIAL CLEANUP';
         manifest.deletes[record.id] = 'IN_FLIGHT';
         await persist(manifest);

@@ -188,6 +188,7 @@ void main() {
           'jobtrail_save_document' => {
             'id': documentId,
             'updated_at': '2026-11-24T09:00:00+07:00',
+            'revision': 5,
             'replayed': false,
           },
           _ => params['p_id'],
@@ -218,15 +219,16 @@ void main() {
         )).replayed,
         isFalse,
       );
-      expect(await repo.deleteAgenda(agendaId), agendaId);
+      expect(await repo.deleteAgenda(agendaId, 3), agendaId);
       expect(
         (await repo.saveDocument(
           snapshot.documents.single,
           SaveMode.update,
+          expectedRevision: 4,
         )).updatedAt,
         DateTime.utc(2026, 11, 24, 2),
       );
-      expect(await repo.deleteDocument(documentId), documentId);
+      expect(await repo.deleteDocument(documentId, 5), documentId);
       expect(calls.map((call) => call.$1), [
         'jobtrail_load_snapshot',
         'jobtrail_create_application',
@@ -279,7 +281,10 @@ void main() {
         'p_file_name': 'sample.pdf',
         'p_version': '1',
         'p_notes': '',
+        'p_expected_revision': 4,
       });
+      expect(calls[6].$2, {'p_id': agendaId, 'p_expected_revision': 3});
+      expect(calls[8].$2, {'p_id': documentId, 'p_expected_revision': 5});
       expect(calls.every((call) => !call.$2.containsKey('p_user_id')), isTrue);
     },
   );
@@ -303,7 +308,7 @@ void main() {
         );
       }, isActive: () => true);
       await expectLater(
-        repo.deleteDocument(documentId),
+        repo.deleteDocument(documentId, 1),
         throwsA(
           isA<RepositoryFailure>().having((e) => e.issue, 'issue', entry.value),
         ),

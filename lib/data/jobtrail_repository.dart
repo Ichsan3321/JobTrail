@@ -83,8 +83,14 @@ class ApplicationCreation {
 
 typedef ApplicationReceipt = ({String id, int revision});
 typedef ApplicationCreateReceipt = ({String id, int revision, bool replayed});
-typedef AgendaReceipt = ({String id, bool replayed});
-typedef DocumentReceipt = ({String id, DateTime updatedAt, bool replayed});
+// Only pre-migration create receipts may omit the revision.
+typedef AgendaReceipt = ({String id, int? revision, bool replayed});
+typedef DocumentReceipt = ({
+  String id,
+  int? revision,
+  DateTime updatedAt,
+  bool replayed,
+});
 
 abstract interface class JobTrailRepository {
   Future<JobTrailSnapshot> loadSnapshot();
@@ -103,10 +109,19 @@ abstract interface class JobTrailRepository {
     RecruitmentStatus status,
   );
   Future<String> deleteApplication(String id, int revision);
-  Future<AgendaReceipt> saveAgenda(Agenda agenda, SaveMode mode);
-  Future<String> deleteAgenda(String id);
-  Future<DocumentReceipt> saveDocument(AppDocument document, SaveMode mode);
-  Future<String> deleteDocument(String id);
+  // Pass the captured revision for update. Omit it for create.
+  Future<AgendaReceipt> saveAgenda(
+    Agenda agenda,
+    SaveMode mode, {
+    int? expectedRevision,
+  });
+  Future<String> deleteAgenda(String id, int expectedRevision);
+  Future<DocumentReceipt> saveDocument(
+    AppDocument document,
+    SaveMode mode, {
+    int? expectedRevision,
+  });
+  Future<String> deleteDocument(String id, int expectedRevision);
   void dispose();
 }
 

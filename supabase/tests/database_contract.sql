@@ -94,13 +94,14 @@ begin
     perform pg_temp.expect_error(format('select public.jobtrail_change_status(%L,1,%L)',
         other_app, 'interview'), 'JT001');
     perform pg_temp.expect_error(format('select public.jobtrail_delete_application(%L,1)', other_app), 'JT001');
-    perform pg_temp.expect_error(format('select public.jobtrail_delete_document(%L)', foreign_doc), 'JT001');
+    perform pg_temp.expect_error(format('select public.jobtrail_delete_document(%L,1)', foreign_doc), 'JT001');
     perform pg_temp.expect_error(format('select public.jobtrail_save_agenda(%L,true,%L,%L,%L,%L)',
         agenda_id, other_app, 'test', '2025-06-15T00:00:00+07:00', 'Office'), 'JT001');
     perform pg_temp.expect_error(format('select pg_temp.create_example(%L)', other_app), 'JT004');
 
     perform public.jobtrail_save_document(doc_id, true, 'My CV', 'cv_resume', 'resume.pdf', '1');
-    perform public.jobtrail_save_document(doc_id, false, 'My revised CV', 'cv_resume', 'resume.pdf', '2');
+    perform public.jobtrail_save_document(doc_id, false, 'My revised CV', 'cv_resume', 'resume.pdf', '2',
+        p_expected_revision => 1);
     perform pg_temp.assert_true((public.jobtrail_save_document(doc_id, true, 'My CV', 'cv_resume',
         'resume.pdf', '1')->>'replayed')::boolean
         and (select title = 'My revised CV' from public.documents where id = doc_id), 'document create replay');
@@ -136,7 +137,7 @@ begin
     perform pg_temp.assert_true((public.jobtrail_save_agenda(agenda_id, true, app_id, 'interview',
         '2025-06-15 00:00:00+07', 'Office')->>'replayed')::boolean, 'same instant replays across offsets');
     perform public.jobtrail_save_agenda(agenda_id, false, app_id, 'test',
-        '2025-06-15 01:00:00+07', 'Updated office');
+        '2025-06-15 01:00:00+07', 'Updated office', p_expected_revision => 1);
     perform pg_temp.assert_true((select type = 'test' and location_or_link = 'Updated office'
         from public.agendas where id = agenda_id), 'owner can edit agenda');
     perform pg_temp.expect_error(format(
@@ -189,8 +190,8 @@ begin
         and (snapshot->>'reference_date')::date =
             ((snapshot->>'reference_instant')::timestamptz at time zone interval '+07:00')::date,
         'snapshot is owner scoped, lossless and uses WIB');
-    perform pg_temp.expect_error(format('select public.jobtrail_delete_document(%L)', doc_id), 'JT005');
-    perform public.jobtrail_delete_agenda(agenda_id);
+    perform pg_temp.expect_error(format('select public.jobtrail_delete_document(%L,2)', doc_id), 'JT005');
+    perform public.jobtrail_delete_agenda(agenda_id, 2);
     perform pg_temp.assert_true(not exists (select id from public.agendas), 'owner can delete agenda');
     perform public.jobtrail_save_agenda('40000000-0000-4000-8000-000000000002', true,
         app_id, 'test', '2025-06-15T02:00:00+07:00', 'Office');
@@ -201,7 +202,7 @@ begin
         and not exists (select id from public.application_status_history)
         and not exists (select application_id from public.application_documents)
         and exists (select id from public.documents where id = doc_id), 'application cascade retains documents');
-    perform public.jobtrail_delete_document(doc_id);
+    perform public.jobtrail_delete_document(doc_id, 2);
 end
 $$;
 reset role;

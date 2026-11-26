@@ -14,6 +14,10 @@ class FakeJobTrailRepository implements JobTrailRepository {
   FutureOr<JobTrailSnapshot> Function() read;
   FutureOr<ApplicationCreateReceipt> Function(String, ApplicationDraft)? create;
   FutureOr<ApplicationReceipt> Function(String, int, RecruitmentStatus)? status;
+  FutureOr<AgendaReceipt> Function(Agenda, SaveMode, int?)? agendaSave;
+  FutureOr<String> Function(String, int)? agendaDelete;
+  FutureOr<DocumentReceipt> Function(AppDocument, SaveMode, int?)? documentSave;
+  FutureOr<String> Function(String, int)? documentDelete;
   int reads = 0;
   bool disposed = false;
 
@@ -49,17 +53,23 @@ class FakeJobTrailRepository implements JobTrailRepository {
   Future<String> deleteApplication(String id, int revision) async =>
       _unsupported();
   @override
-  Future<AgendaReceipt> saveAgenda(Agenda agenda, SaveMode mode) async =>
-      _unsupported();
+  Future<AgendaReceipt> saveAgenda(
+    Agenda agenda,
+    SaveMode mode, {
+    int? expectedRevision,
+  }) async => (agendaSave ?? _unsupported)(agenda, mode, expectedRevision);
   @override
-  Future<String> deleteAgenda(String id) async => _unsupported();
+  Future<String> deleteAgenda(String id, int expectedRevision) async =>
+      (agendaDelete ?? _unsupported)(id, expectedRevision);
   @override
   Future<DocumentReceipt> saveDocument(
     AppDocument document,
-    SaveMode mode,
-  ) async => _unsupported();
+    SaveMode mode, {
+    int? expectedRevision,
+  }) async => (documentSave ?? _unsupported)(document, mode, expectedRevision);
   @override
-  Future<String> deleteDocument(String id) async => _unsupported();
+  Future<String> deleteDocument(String id, int expectedRevision) async =>
+      (documentDelete ?? _unsupported)(id, expectedRevision);
   @override
   void dispose() => disposed = true;
 }

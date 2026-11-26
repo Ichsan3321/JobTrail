@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { validRevision } from './hosted_fixture_plan.mjs';
 
 const origin = 'https://ehzdmsdhdlqmicmwbnwh.supabase.co';
 const required = [
@@ -15,10 +16,19 @@ const safeErrorCodes = new Set([
   'invalid_credentials', 'email_not_confirmed', 'over_request_rate_limit',
 ]);
 
-class SmokeFailure extends Error {}
+class SmokeFailure extends Error {
+  constructor(message, outcomeUnknown = false) {
+    super(message);
+    this.outcomeUnknown = outcomeUnknown;
+  }
+}
 
 function requireThat(condition, message) {
   if (!condition) throw new SmokeFailure(message);
+}
+
+function requireReceipt(condition, message) {
+  if (!condition) throw new SmokeFailure(message, true);
 }
 
 function credentials(env) {
@@ -38,18 +48,27 @@ function describe(response) {
 }
 
 function ok(response, action) {
-  requireThat(response.ok, `${action}: expected success, received ${describe(response)}`);
+  if (!response.ok) {
+    throw new SmokeFailure(`${action}: expected success, received ${describe(response)}`,
+      uncertain(response));
+  }
   return response.data;
+}
+
+function uncertain(response) {
+  return response.write && (response.status >= 500 || [408, 429].includes(response.status));
 }
 
 function denied(response, codes, action) {
   const code = response.data?.code ?? response.data?.error_code;
-  requireThat(!response.ok && codes.includes(code),
-    `${action}: expected ${codes.join(' or ')}, received ${describe(response)}`);
+  if (response.ok || !codes.includes(code)) {
+    throw new SmokeFailure(`${action}: expected ${codes.join(' or ')}, received ${describe(response)}`,
+      uncertain(response) || (response.write && response.ok));
+  }
 }
 
 function client(key) {
-  async function request(action, path, { method = 'GET', token, body } = {}) {
+  async function request(action, path, { method = 'GET', token, body, write = false } = {}) {
     const url = new URL(path, origin);
     requireThat(url.origin === origin, `${action}: target origin rejected`);
     const headers = { apikey: key, Accept: 'application/json' };
@@ -69,16 +88,20 @@ function client(key) {
           // Response text could contain secrets. Only structured status is reported.
         }
       }
-      return { ok: response.ok, status: response.status, data };
+      if (write && response.ok && data === null) {
+        throw new SmokeFailure('Write receipt missing. Reconcile before continuing.', true);
+      }
+      return { ok: response.ok, status: response.status, data, write };
     } catch (error) {
+      if (error instanceof SmokeFailure) throw error;
       throw new SmokeFailure(`${action}: ${error.name === 'TimeoutError' ?
-        'request timed out' : 'request failed or redirect was rejected'}`);
+        'request timed out' : 'request failed or redirect was rejected'}`, write);
     }
   }
 
   function rpc(name, args = {}, account) {
     return request(name, `/rest/v1/rpc/jobtrail_${name}`, {
-      method: 'POST', token: account?.token, body: args,
+      method: 'POST', token: account?.token, body: args, write: name !== 'load_snapshot',
     });
   }
 
@@ -86,7 +109,7 @@ function client(key) {
     const query = new URLSearchParams({ select });
     for (const [field, value] of Object.entries(filters)) query.set(field, `eq.${value}`);
     return request(`${options.method ?? 'GET'} ${table}`,
-      `/rest/v1/${table}?${query}`, { ...options, token: account?.token });
+      `/rest/v1/${table}?${query}`, { ...options, token: account?.token, write: Boolean(options.method) });
   }
 
   async function signIn(label, email, password) {
@@ -106,8 +129,8 @@ function client(key) {
 }
 
 const recordTypes = {
-  applications: { marker: 'company', deleteRpc: 'delete_application' },
   agendas: { marker: 'location_or_link', deleteRpc: 'delete_agenda' },
+  applications: { marker: 'company', deleteRpc: 'delete_application' },
   documents: { marker: 'title', deleteRpc: 'delete_document' },
 };
 
@@ -115,23 +138,34 @@ async function cleanup(api, pending, tag) {
   let failures = 0;
   for (const [table, type] of Object.entries(recordTypes)) {
     for (const { id, account } of pending.filter((record) => record.table === table)) {
-      const select = `id,user_id,${type.marker}${table === 'applications' ? ',revision' : ''}`;
+      const select = `id,user_id,${type.marker},revision`;
       try {
         const rows = ok(await api.rest(table, select, { id }, account), `Cleanup read ${table}`);
         requireThat(Array.isArray(rows) && rows.length <= 1, 'Unexpected cleanup read shape');
         if (rows.length === 0) continue;
         const [row] = rows;
-        requireThat(row.id === id && row.user_id === account.id && row[type.marker] === tag,
+        requireThat(row.id === id && row.user_id === account.id && row[type.marker] === tag && validRevision(row.revision),
           'Cleanup refused a row without the run marker and expected owner');
-        const args = { p_id: id };
-        if (table === 'applications') args.p_expected_revision = row.revision;
-        ok(await api.rpc(type.deleteRpc, args, account), `Cleanup delete ${table}`);
+        if (table === 'applications') {
+          const filter = { application_id: id };
+          const agendas = ok(await api.rest('agendas', 'id', filter, account), 'Check remaining agendas');
+          const links = ok(await api.rest('application_documents', 'document_id', filter, account), 'Check remaining links');
+          const trackedDocs = new Set(pending.filter(record =>
+            record.table === 'documents' && record.account.id === account.id).map(record => record.id));
+          requireThat(Array.isArray(agendas) && agendas.length === 0 &&
+            Array.isArray(links) && links.every(link => trackedDocs.has(link.document_id)),
+          'Cleanup refused an application with remaining agendas or untracked links.');
+        }
+        const args = { p_id: id, p_expected_revision: row.revision };
+        const receipt = ok(await api.rpc(type.deleteRpc, args, account), `Cleanup delete ${table}`);
+        if (receipt !== id) throw new SmokeFailure('Cleanup receipt invalid. Reconcile before retry.', true);
         const remaining = ok(await api.rest(table, 'id', { id }, account), `Cleanup verify ${table}`);
         requireThat(Array.isArray(remaining) && remaining.length === 0, 'Cleanup verification failed');
       } catch (error) {
         failures++;
         const detail = error instanceof SmokeFailure ? error.message : 'unexpected error';
         console.error(`[FAIL] Cleanup ${table} ${id}: ${detail}`);
+        if (error.outcomeUnknown) return failures;
       }
     }
   }
@@ -179,7 +213,8 @@ async function run(input) {
       p_id: id, p_create: true, p_title: tag, p_category: 'cv_resume',
       p_file_name: 'smoke.pdf', p_version: '1', p_notes: '',
     }, account), 'Create test document');
-    requireThat(saved?.id === id && saved.replayed === false, 'Document: unexpected create result');
+    requireReceipt(saved?.id === id && saved.revision === 1 && saved.replayed === false,
+      'Document: unexpected create result');
   }
 
   const appFilter = { id: ids.application };
@@ -188,6 +223,9 @@ async function run(input) {
   let failure;
   try {
     const initial = await snapshot(a);
+    const control = await snapshot(b);
+    requireThat(initial.entity_revision_version === 1 && control.entity_revision_version === 1,
+      'Entity revision migration is required before smoke writes.');
     const appliedOn = initial.reference_date;
     const draft = {
       p_id: ids.application, p_company: tag, p_position: 'Integration test',
@@ -199,10 +237,10 @@ async function run(input) {
     await saveDocument(ids.documentB, b);
     track('applications', ids.application, a);
     const created = ok(await api.rpc('create_application', draft, a), 'Create linked application');
-    requireThat(created?.id === ids.application && created.revision === 1 && created.replayed === false,
+    requireReceipt(created?.id === ids.application && created.revision === 1 && created.replayed === false,
       'Create: expected a new application at revision 1');
     const replay = ok(await api.rpc('create_application', draft, a), 'Replay identical create');
-    requireThat(replay?.id === ids.application && replay.revision === 1 && replay.replayed === true,
+    requireReceipt(replay?.id === ids.application && replay.revision === 1 && replay.replayed === true,
       'Replay: expected same ID and revision, marked replayed');
 
     track('agendas', ids.agenda, a);
@@ -210,7 +248,8 @@ async function run(input) {
       p_id: ids.agenda, p_create: true, p_application_id: ids.application, p_type: 'interview',
       p_scheduled_at: `${appliedOn}T09:00:00+07:00`, p_location_or_link: tag, p_notes: '',
     }, a), 'Create related agenda');
-    requireThat(agenda?.id === ids.agenda, 'Agenda: unexpected ID');
+    requireReceipt(agenda?.id === ids.agenda && agenda.revision === 1 && agenda.replayed === false,
+      'Agenda: unexpected create result');
 
     const appRows = await rows('applications', 'id,user_id,company,status,revision', appFilter, a);
     const docRows = await rows('documents', 'id,user_id,title', docFilter, a);
@@ -226,9 +265,9 @@ async function run(input) {
     'Owner REST: incorrect records, link, or initial history');
     const mine = await snapshot(a);
     requireThat(mine.applications.some((row) => row.id === ids.application && row.revision === 1) &&
-      mine.documents.some((row) => row.id === ids.documentA) &&
+      mine.documents.some((row) => row.id === ids.documentA && row.revision === 1) &&
       !mine.documents.some((row) => row.id === ids.documentB) &&
-      mine.agendas.some((row) => row.id === ids.agenda) &&
+      mine.agendas.some((row) => row.id === ids.agenda && row.revision === 1) &&
       mine.application_documents.some((row) => row.application_id === ids.application &&
         row.document_id === ids.documentA) &&
       mine.history.filter((row) => row.application_id === ids.application).length === 1,
@@ -287,12 +326,14 @@ async function run(input) {
     const edited = ok(await api.rpc('update_application', {
       ...draft, ...revisionOne, p_notes: 'Edited by smoke test',
     }, a), 'Save full edit');
-    requireThat(edited?.id === ids.application && edited.revision === 2 &&
-      (await rows('application_status_history', 'id', related, a)).length === 1,
-    'Full edit: expected revision 2 and unchanged history');
+    requireReceipt(edited?.id === ids.application && edited.revision === 2,
+      'Full edit: expected revision 2');
+    requireThat((await rows('application_status_history', 'id', related, a)).length === 1,
+      'Full edit: expected unchanged history');
     const revisionTwo = { p_id: ids.application, p_expected_revision: 2 };
     const changed = ok(await api.rpc('change_status', { ...revisionTwo, p_status: 'interview' }, a), 'Change status');
-    requireThat(changed?.id === ids.application && changed.revision === 3, 'Status: expected revision 3');
+    requireReceipt(changed?.id === ids.application && changed.revision === 3,
+      'Status: expected revision 3');
     denied(await api.rpc('change_status', { ...revisionTwo, p_status: 'rejected' }, a),
       ['JT002'], 'Reject stale revision');
     const after = await rows('application_status_history', 'status,event_no', related, a);
@@ -300,10 +341,17 @@ async function run(input) {
       (await rows('applications', 'status,revision,notes', appFilter, a)).some((row) =>
         row.status === 'interview' && row.revision === 3 && row.notes === 'Edited by smoke test'),
     'Revision: persisted status, history, or notes are incorrect');
-    denied(await api.rpc('delete_document', { p_id: ids.documentA }, a),
+    denied(await api.rpc('delete_document', { p_id: ids.documentA, p_expected_revision: 1 }, a),
       ['JT005'], 'Protect linked document');
-    ok(await api.rpc('delete_application', { p_id: ids.application, p_expected_revision: 3 }, a),
+    const cascade = await snapshot(a);
+    requireThat(cascade.agendas.filter(row => row.application_id === ids.application)
+      .every(row => row.id === ids.agenda) &&
+      cascade.application_documents.filter(row => row.application_id === ids.application)
+        .every(row => row.document_id === ids.documentA),
+    'Cascade refused an untracked relationship.');
+    const deleted = ok(await api.rpc('delete_application', { p_id: ids.application, p_expected_revision: 3 }, a),
       'Delete application with current revision');
+    requireReceipt(deleted === ids.application, 'Application: invalid delete receipt');
     requireThat((await rows('applications', 'id', appFilter, a)).length === 0 &&
       (await rows('agendas', 'id', related, a)).length === 0 &&
       (await rows('application_status_history', 'id', related, a)).length === 0 &&
@@ -314,11 +362,15 @@ async function run(input) {
   } catch (error) {
     failure = error;
   } finally {
-    const cleanupFailures = await cleanup(api, pending, tag);
-    if (cleanupFailures) {
-      if (!failure) failure = new SmokeFailure('Cleanup incomplete. Review only the printed fixture IDs.');
+    if (failure?.outcomeUnknown) {
+      console.error('[FAIL] Write outcome unknown. Reconcile the printed fixture IDs before any further writes.');
     } else {
-      console.log('[PASS] Cleanup: tracked fixtures absent or removed through owner RPCs');
+      const cleanupFailures = await cleanup(api, pending, tag);
+      if (cleanupFailures) {
+        if (!failure) failure = new SmokeFailure('Cleanup incomplete. Review only the printed fixture IDs.');
+      } else {
+        console.log('[PASS] Cleanup: tracked fixtures absent or removed through owner RPCs');
+      }
     }
   }
   if (failure) throw failure;
