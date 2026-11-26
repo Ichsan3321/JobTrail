@@ -20,6 +20,9 @@ migrate_working_dir/
 !.env.example
 !.env.*.example
 
+# Local hosted QA manifests, locks and transient checkpoints.
+/.jobtrail-qa/
+
 # IntelliJ related
 *.iml
 *.ipr
