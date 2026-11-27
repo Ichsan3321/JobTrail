@@ -12,7 +12,7 @@ import 'auth_callback_url_stub.dart'
 import 'auth_configuration.dart';
 import 'auth_provider.dart';
 
-class SupabaseAuthProvider implements SessionAuthProvider {
+class SupabaseAuthProvider implements GoogleOAuthProvider {
   SupabaseAuthProvider._(
     this._configuration,
     this._client,
@@ -125,7 +125,8 @@ class SupabaseAuthProvider implements SessionAuthProvider {
   bool _starting = true;
   bool _disposed = false;
   int _eventVersion = 0;
-  AuthIssue? _startupError;
+  AuthSession? _startupFeedback;
+  Future<void>? _googleLaunch;
 
   @override
   Stream<AuthSession> get sessionChanges => _changes.stream;
@@ -154,8 +155,8 @@ class SupabaseAuthProvider implements SessionAuthProvider {
 
   void _emit(AuthSession session) {
     if (_disposed) return;
-    if (!_changes.hasListener && session.phase == AuthPhase.error) {
-      _startupError = session.issue;
+    if (!_changes.hasListener && session.issue != null) {
+      _startupFeedback = session;
     }
     _changes.add(session);
   }
@@ -289,16 +290,26 @@ class SupabaseAuthProvider implements SessionAuthProvider {
       if (flow == null || _lastCallback == uri || _disposed) return;
       _lastCallback = uri;
       await _command(() async {
-        _emit(const AuthSession.loading());
         clearAuthCallbackUrl();
-        // Fence both callbacks before the SDK can persist the exchanged session.
+        final isGoogle = flow == AuthCallback.google;
+        // Google is launched from Login. A return in a signed-in tab should
+        // leave that tab's restored session alone.
+        if (isGoogle && _auth.currentSession != null) return;
+        _emit(const AuthSession.loading());
+        final codes = uri.queryParametersAll['code'];
+        final hasCode =
+            codes != null && codes.length == 1 && codes.single.isNotEmpty;
+        if (isGoogle) {
+          final issue = _googleRedirectIssue(uri);
+          if (issue != null || !hasCode) {
+            await _reportGoogleCallbackIssue(issue ?? AuthIssue.googleFailed);
+            return;
+          }
+        }
+        // Fence callbacks before the SDK can persist the exchanged session.
         await _recovery.persistSession('pending');
         try {
-          final codes = uri.queryParametersAll['code'];
-          if (codes == null ||
-              codes.length != 1 ||
-              codes.single.isEmpty ||
-              uri.queryParameters.containsKey('error')) {
+          if (!hasCode || uri.queryParameters.containsKey('error')) {
             throw AuthIssue.invalidLink;
           }
           final response = await _auth.exchangeCodeForSession(codes.single);
@@ -323,6 +334,14 @@ class SupabaseAuthProvider implements SessionAuthProvider {
           } catch (_) {
             // A remaining marker fails closed on restart.
           }
+          if (isGoogle) {
+            await _reportGoogleCallbackIssue(
+              issue == AuthIssue.network || issue == AuthIssue.rateLimit
+                  ? issue
+                  : AuthIssue.googleFailed,
+            );
+            return;
+          }
           throw issue == AuthIssue.network || issue == AuthIssue.rateLimit
               ? issue
               : AuthIssue.invalidLink;
@@ -333,13 +352,34 @@ class SupabaseAuthProvider implements SessionAuthProvider {
     }
   }
 
+  AuthIssue? _googleRedirectIssue(Uri uri) {
+    // Supabase can return the same error in the query and the fragment.
+    final fragment = Uri.splitQueryString(uri.fragment);
+    final query = uri.queryParameters;
+    final error = query['error'] ?? fragment['error'];
+    final code = query['error_code'] ?? fragment['error_code'];
+    if (error == null && code == null) return null;
+    return error == 'access_denied' && (code == null || code.isEmpty)
+        ? AuthIssue.googleCancelled
+        : AuthIssue.googleFailed;
+  }
+
+  Future<void> _reportGoogleCallbackIssue(AuthIssue issue) async {
+    final current = await _readCurrent();
+    _emit(
+      current.phase == AuthPhase.signedOut
+          ? AuthSession.signedOut(issue: issue)
+          : current,
+    );
+  }
+
   @override
   Future<AuthSession> readSession() async {
     await _startup;
     await _queue;
-    final error = _startupError;
-    _startupError = null;
-    if (error != null) return AuthSession.error(error);
+    final feedback = _startupFeedback;
+    _startupFeedback = null;
+    if (feedback != null) return feedback;
     final session = _auth.currentSession;
     if (session != null && session.isExpired) {
       try {
@@ -361,6 +401,25 @@ class SupabaseAuthProvider implements SessionAuthProvider {
 
   String _redirect(AuthCallback flow) =>
       _configuration.redirect(flow, onWeb: kIsWeb).toString();
+
+  @override
+  bool get canSignInWithGoogle =>
+      _configuration.allowsGoogleOAuth(Uri.base, onWeb: kIsWeb);
+
+  @override
+  Future<void> signInWithGoogle() => _googleLaunch ??= _command(() async {
+    if (!canSignInWithGoogle || _auth.currentSession != null) {
+      throw AuthIssue.googleFailed;
+    }
+    await _prepareSignIn();
+    final launched = await _auth.signInWithOAuth(
+      sdk.OAuthProvider.google,
+      redirectTo: _redirect(AuthCallback.google),
+      scopes: 'openid', // Supabase's Google provider adds email and profile.
+      queryParams: const {'prompt': 'select_account'},
+    );
+    if (!launched) throw AuthIssue.googleFailed;
+  }).whenComplete(() => _googleLaunch = null);
 
   @override
   Future<void> signIn(String email, String password) => _command(() async {
