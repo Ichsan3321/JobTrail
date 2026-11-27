@@ -2,11 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jobtrail/core/routes/app_navigation.dart';
 import 'package:jobtrail/core/theme/app_theme.dart';
 import 'package:jobtrail/data/jobtrail_repository.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
 import 'package:jobtrail/models/app_document.dart';
+import 'package:jobtrail/models/application.dart';
+import 'package:jobtrail/models/recruitment_status.dart';
 import 'package:jobtrail/screens/documents/documents_screen.dart';
+import 'package:jobtrail/widgets/app_shell.dart';
 
 import 'support/fake_jobtrail_repository.dart';
 
@@ -36,14 +40,17 @@ class _DeleteRepository extends FakeJobTrailRepository {
   }
 }
 
-JobTrailSnapshot _snapshot(List<AppDocument> documents) => JobTrailSnapshot(
+JobTrailSnapshot _snapshot(
+  List<AppDocument> documents, {
+  List<Application> applications = const [],
+}) => JobTrailSnapshot(
   referenceDate: DateTime.utc(2026, 11, 25),
   referenceInstantUtc: _instant,
-  applications: const [],
+  applications: applications,
   agendas: const [],
   documents: documents,
   history: const [],
-  applicationRevisions: const {},
+  applicationRevisions: {for (final app in applications) app.id: 1},
 );
 
 Future<JobTrailStore> _pumpDocuments(
@@ -56,10 +63,7 @@ Future<JobTrailStore> _pumpDocuments(
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.light,
-      // Retained remote delete is exercised only in this fake test harness.
-      home: Scaffold(
-        body: DocumentsScreen.deferredMutationsForTesting(store: store),
-      ),
+      home: Scaffold(body: DocumentsScreen(store: store)),
     ),
   );
   await tester.pumpAndSettle();
@@ -150,6 +154,89 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('connected linked document is blocked before any delete RPC', (
+    tester,
+  ) async {
+    final repo = _DeleteRepository();
+    final application = Application(
+      id: 'application-linked',
+      company: 'QA Company',
+      position: 'Developer',
+      source: 'Website perusahaan',
+      appliedAt: DateTime.utc(2026, 11, 25),
+      status: RecruitmentStatus.applied,
+      location: 'Surabaya',
+      workType: WorkType.remote,
+      documentIds: [_document.id],
+    );
+    repo.read = () => _snapshot([_document], applications: [application]);
+    final store = await _pumpDocuments(tester, repo);
+    await _openDelete(tester);
+    expect(find.text('Dokumen masih digunakan'), findsOneWidget);
+    expect(find.textContaining('QA Company'), findsOneWidget);
+    expect(find.text('Hapus dokumen?'), findsNothing);
+    expect(repo.calls, isEmpty);
+    await tester.tap(find.text('Mengerti'));
+    await tester.pumpAndSettle();
+    expect(store.documentById(_document.id), same(_document));
+    expect(repo.calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final succeeds in [true, false]) {
+    testWidgets('late delete feedback after tab switch (success=$succeeds)', (
+      tester,
+    ) async {
+      final repo = _DeleteRepository();
+      final documents = [_document];
+      final response = Completer<String>();
+      repo.read = () => _snapshot(documents);
+      repo.remove = (_, _) => response.future;
+      final store = JobTrailStore.connected(repo);
+      final navigation = AppNavigation(store);
+      addTearDown(store.dispose);
+      addTearDown(navigation.dispose);
+      await store.refresh();
+      navigation.showTab(AppTab.documents);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          navigatorKey: navigation.navigatorKey,
+          home: AppShell(store: store, navigation: navigation),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openDelete(tester);
+      await _confirm(tester);
+      expect(repo.calls, [(_document.id, 4)]);
+      expect(store.isMutating, isTrue);
+      navigation.showTab(AppTab.home);
+      await tester.pumpAndSettle();
+      if (succeeds) {
+        documents.clear();
+        response.complete(_document.id);
+      } else {
+        response.completeError(
+          const RepositoryFailure(RepositoryIssue.network),
+        );
+      }
+      await tester.pumpAndSettle();
+      expect(navigation.selectedTab, AppTab.home);
+      expect(navigation.navigatorKey.currentState!.canPop(), isFalse);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(repo.calls, [(_document.id, 4)]);
+      expect(store.documents, hasLength(succeeds ? 0 : 1));
+      navigation.showTab(AppTab.documents);
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
+      expect(
+        find.text(_document.title),
+        succeeds ? findsNothing : findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('server rejects a linked document even if snapshot is stale', (
     tester,

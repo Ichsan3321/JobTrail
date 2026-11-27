@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_tokens.dart';
@@ -18,26 +17,12 @@ bool _canSaveDocuments(JobTrailStore store) =>
         (store.phase == StorePhase.ready || store.phase == StorePhase.empty));
 
 class DocumentsScreen extends StatefulWidget {
-  const DocumentsScreen({super.key, required this.store, this.isActiveTab})
-    : _exerciseDeferredMutations = false;
-
-  /// Exercises the retained edit/delete implementation with a fake repository.
-  /// No application route uses this constructor; release/profile stay gated.
-  @visibleForTesting
-  const DocumentsScreen.deferredMutationsForTesting({
-    super.key,
-    required this.store,
-    this.isActiveTab,
-  }) : _exerciseDeferredMutations = true;
+  const DocumentsScreen({super.key, required this.store, this.isActiveTab});
 
   final JobTrailStore store;
   // Read live navigation state, not the IndexedStack's shared route state.
   // Standalone screens (e.g. widget tests) own their own route.
   final bool Function()? isActiveTab;
-  final bool _exerciseDeferredMutations;
-
-  bool get _allowConnectedEditDelete =>
-      kDebugMode && _exerciseDeferredMutations;
 
   @override
   State<DocumentsScreen> createState() => _DocumentsScreenState();
@@ -56,13 +41,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 
   bool get _ownsActiveTab => widget.isActiveTab?.call() ?? true;
 
-  // Even revision-aware remote mutations remain gated until hosted rollout
-  // and separate screen approval. Legacy snapshots have no revision.
+  // Remote mutations require a positive server revision. Legacy records
+  // remain read-only (preview is still available).
   bool _canEditDelete(String id) =>
       _canWriteDocuments &&
       (store.allowsLocalWrites ||
-          (widget._allowConnectedEditDelete &&
-              (store.documentRevision(id) ?? 0) > 0));
+          (store.isConnected && (store.documentRevision(id) ?? 0) > 0));
 
   @override
   void didUpdateWidget(covariant DocumentsScreen oldWidget) {
@@ -107,11 +91,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
         children: [
           _buildHeader(total),
-          if (store.isConnected && !widget._allowConnectedEditDelete)
+          if (store.isConnected &&
+              store.documents.any((document) => (document.revision ?? 0) <= 0))
             const Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
-                'Edit dan hapus metadata server belum tersedia.',
+                'Edit dan hapus tidak tersedia untuk dokumen tanpa revisi server.',
                 style: TextStyle(fontSize: 11, color: AppColors.gray),
               ),
             ),
@@ -396,7 +381,6 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         revisionAtDraftOpen: revisionAtDraftOpen,
         isOwnerActive: () =>
             mounted && identical(store, activeStore) && _ownsActiveTab,
-        allowConnectedEditDelete: widget._allowConnectedEditDelete,
         onLateResult: (message) => _showMutationResult(activeStore, message),
       ),
     );
@@ -856,7 +840,6 @@ class _DocumentFormSheet extends StatefulWidget {
     this.document,
     required this.store,
     required this.onLateResult,
-    required this.allowConnectedEditDelete,
     required this.revisionAtDraftOpen,
     required this.isOwnerActive,
   });
@@ -864,7 +847,6 @@ class _DocumentFormSheet extends StatefulWidget {
   final AppDocument? document;
   final JobTrailStore store;
   final ValueChanged<String> onLateResult;
-  final bool allowConnectedEditDelete;
   final int? revisionAtDraftOpen;
   final bool Function() isOwnerActive;
 
@@ -888,6 +870,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   AppDocument? _pendingCreate;
   bool _seenPendingCreate = false;
   bool _confirmingDiscard = false;
+  bool _accountRecovery = false;
   late final Listenable _draftChanges;
 
   JobTrailStore get store => widget.store;
@@ -896,7 +879,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       _canSaveDocuments(store) &&
       (_creating ||
           store.allowsLocalWrites ||
-          (widget.allowConnectedEditDelete &&
+          (store.isConnected &&
               (widget.revisionAtDraftOpen ?? 0) > 0 &&
               (store.documentRevision(widget.document!.id) ?? 0) > 0));
   bool get _lockFields => _saving || _committed || _pendingCreate != null;
@@ -908,6 +891,25 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       mounted &&
       widget.isOwnerActive() &&
       ModalRoute.of(context)?.isActive == true;
+  // The account-scoped Navigator can outlive Documents when authentication
+  // clears the snapshot. Only allow local modal recovery in that case;
+  // submitting or delivering feedback still requires the original owner.
+  bool get _authSnapshotLost =>
+      store.isConnected &&
+      !store.hasSnapshot &&
+      store.failure?.issue == RepositoryIssue.authentication;
+  bool get _recoveringAccount => _accountRecovery || _authSnapshotLost;
+  bool get _canManageCurrentSheet =>
+      _routeCurrent ||
+      (mounted &&
+          _recoveringAccount &&
+          ModalRoute.of(context)?.isCurrent == true);
+  bool get _canManageActiveSheet =>
+      _routeActive ||
+      (mounted &&
+          _recoveringAccount &&
+          ModalRoute.of(context)?.isActive == true);
+
   String get _successMessage => _creating
       ? 'Metadata dokumen ditambahkan.'
       : 'Metadata dokumen diperbarui.';
@@ -956,7 +958,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   }
 
   Future<void> _requestClose() async {
-    if (_saving || _confirmingDiscard || !_routeCurrent) return;
+    if (_saving || _confirmingDiscard || !_canManageCurrentSheet) return;
     if (!_dirty) {
       Navigator.pop(context);
       return;
@@ -992,7 +994,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       _confirmingDiscard = false;
     }
     if (!mounted) return;
-    if (discard == true && _routeCurrent && !_saving) {
+    if (discard == true && _canManageCurrentSheet && !_saving) {
       Navigator.pop(context);
     }
   }
@@ -1123,7 +1125,11 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 child: FilledButton(
                   key: const ValueKey('document-form-save'),
                   onPressed:
-                      _saving || _committed || _needsReview || !_canSubmit
+                      _saving ||
+                          _committed ||
+                          _needsReview ||
+                          _recoveringAccount ||
+                          !_canSubmit
                       ? null
                       : _save,
                   child: Text(
@@ -1217,10 +1223,14 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       a.notes == b.notes;
 
   Future<void> _refreshSnapshot() async {
-    if (_saving || !_routeCurrent) return;
-    setState(() => _saving = true);
+    if (_saving || !_canManageCurrentSheet) return;
+    setState(() {
+      _accountRecovery |= _authSnapshotLost;
+      _saving = true;
+    });
     await store.refresh();
-    if (!_routeActive) return;
+    if (!_canManageActiveSheet) return;
+    _accountRecovery |= _authSnapshotLost;
     final ready = _canSaveDocuments(store);
     if (_pendingCreate != null && ready) {
       _seenPendingCreate |= store.documentById(_pendingCreate!.id) != null;
@@ -1252,9 +1262,11 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     if (ready &&
         _committed &&
         store.documentById(_committedId!) != null &&
-        _routeCurrent) {
+        _canManageCurrentSheet) {
+      // The original screen may have been destroyed and rebuilt. Do not
+      // deliver a result to it after recovering the account snapshot.
       if (!mounted) return;
-      Navigator.pop(context, _successMessage);
+      Navigator.pop(context, _accountRecovery ? null : _successMessage);
     }
   }
 
@@ -1262,6 +1274,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     if (_saving ||
         _committed ||
         _needsReview ||
+        _recoveringAccount ||
         !_routeCurrent ||
         !_canSubmit) {
       return;
@@ -1330,12 +1343,13 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
           ? 'Metadata sudah disimpan, tetapi dokumen tidak tersedia '
                 'pada data terbaru.'
           : successMessage;
-      if (!_routeActive) {
+      if (!_canManageActiveSheet) {
         onLateResult(message);
         return;
       }
       // A receipt proves the write committed; never submit this intent again.
       setState(() {
+        _accountRecovery |= _authSnapshotLost;
         _committed = true;
         _committedId = result.receipt.id;
         _pendingCreate = null;
@@ -1348,7 +1362,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         Navigator.pop(context, _successMessage);
       }
     } on RepositoryFailure catch (error) {
-      if (!_routeActive) {
+      if (!_canManageActiveSheet) {
         if (error.issue != RepositoryIssue.authentication) {
           onLateResult(
             error.writeOutcomeUnknown
@@ -1360,6 +1374,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         return;
       }
       setState(() {
+        _accountRecovery |= _authSnapshotLost;
         if (error.writeOutcomeUnknown && _creating) {
           _pendingCreate = item;
           _seenPendingCreate |= store.documentById(item.id) != null;
@@ -1409,7 +1424,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         onLateResult(RepositoryIssue.unexpected.message);
       }
     } finally {
-      if (_routeActive) setState(() => _saving = false);
+      if (_canManageActiveSheet) setState(() => _saving = false);
     }
   }
 }
