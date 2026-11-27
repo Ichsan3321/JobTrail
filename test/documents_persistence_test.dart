@@ -68,20 +68,15 @@ DocumentReceipt _receipt(
 
 Future<JobTrailStore> _pumpDocuments(
   WidgetTester tester,
-  _DocumentRepository repo, {
-  bool exerciseDeferredMutations = false,
-}) async {
+  _DocumentRepository repo,
+) async {
   final store = JobTrailStore.connected(repo);
   addTearDown(store.dispose);
   await store.refresh();
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.light,
-      home: Scaffold(
-        body: exerciseDeferredMutations
-            ? DocumentsScreen.deferredMutationsForTesting(store: store)
-            : DocumentsScreen(store: store),
-      ),
+      home: Scaffold(body: DocumentsScreen(store: store)),
     ),
   );
   await tester.pumpAndSettle();
@@ -162,11 +157,7 @@ void main() {
       documents[0] = _serverDocument(item, revision: 5);
       return _receipt(item, revision: 5);
     };
-    final store = await _pumpDocuments(
-      tester,
-      repo,
-      exerciseDeferredMutations: true,
-    );
+    final store = await _pumpDocuments(tester, repo);
     await tester.tap(find.byKey(const ValueKey('document-menu-document-edit')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Edit metadata'));
@@ -182,22 +173,73 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('connected screen exposes read, preview and create only', (
+  testWidgets(
+    'connected screen exposes revision-aware actions through AppShell',
+    (tester) async {
+      final repo = _DocumentRepository();
+      final item = AppDocument(
+        id: 'document-connected',
+        revision: 4,
+        title: 'CV Connected',
+        category: DocumentCategory.cvResume,
+        fileName: 'cv.pdf',
+        version: '1.0',
+        updatedAt: _instant,
+      );
+      repo.read = () => _snapshot([item]);
+      final store = JobTrailStore.connected(repo);
+      final navigation = AppNavigation(store);
+      addTearDown(store.dispose);
+      addTearDown(navigation.dispose);
+      await store.refresh();
+      navigation.showTab(AppTab.documents);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          navigatorKey: navigation.navigatorKey,
+          home: AppShell(store: store, navigation: navigation),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(item.title), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('documents-add')))
+            .onPressed,
+        isNotNull,
+      );
+      final menu = find.byKey(
+        const ValueKey('document-menu-document-connected'),
+      );
+      await tester.ensureVisible(menu);
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(find.text('Edit metadata'), findsOneWidget);
+      expect(find.text('Hapus dokumen'), findsOneWidget);
+      await tester.tap(find.text('Lihat metadata'));
+      await tester.pumpAndSettle();
+      expect(find.text('Pratinjau Metadata'), findsOneWidget);
+      expect(repo.calls, isEmpty);
+      expect(store.documents.single, same(item));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('legacy null revision keeps edit and delete gated', (
     tester,
   ) async {
     final repo = _DocumentRepository();
     final item = AppDocument(
-      id: 'document-gated',
-      revision: 4,
-      title: 'CV Connected',
+      id: 'document-legacy',
+      title: 'CV Legacy',
       category: DocumentCategory.cvResume,
-      fileName: 'cv.pdf',
+      fileName: 'legacy.pdf',
       version: '1.0',
       updatedAt: _instant,
     );
     repo.read = () => _snapshot([item]);
     final store = await _pumpDocuments(tester, repo);
-    expect(find.text(item.title), findsOneWidget);
+    expect(store.documentRevision(item.id), isNull);
     expect(
       tester
           .widget<FilledButton>(find.byKey(const ValueKey('documents-add')))
@@ -205,55 +247,15 @@ void main() {
       isNotNull,
     );
     await tester.tap(
-      find.byKey(const ValueKey('document-menu-document-gated')),
+      find.byKey(const ValueKey('document-menu-document-legacy')),
     );
     await tester.pumpAndSettle();
     expect(find.text('Edit metadata'), findsNothing);
     expect(find.text('Hapus dokumen'), findsNothing);
-    await tester.tap(find.text('Lihat metadata'));
-    await tester.pumpAndSettle();
-    expect(find.text('Pratinjau Metadata'), findsOneWidget);
+    expect(find.text('Lihat metadata'), findsOneWidget);
     expect(repo.calls, isEmpty);
-    expect(store.documents.single, same(item));
     expect(tester.takeException(), isNull);
   });
-
-  testWidgets(
-    'legacy null revision keeps edit and delete gated even in test seam',
-    (tester) async {
-      final repo = _DocumentRepository();
-      final item = AppDocument(
-        id: 'document-legacy',
-        title: 'CV Legacy',
-        category: DocumentCategory.cvResume,
-        fileName: 'legacy.pdf',
-        version: '1.0',
-        updatedAt: _instant,
-      );
-      repo.read = () => _snapshot([item]);
-      final store = await _pumpDocuments(
-        tester,
-        repo,
-        exerciseDeferredMutations: true,
-      );
-      expect(store.documentRevision(item.id), isNull);
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('documents-add')))
-            .onPressed,
-        isNotNull,
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('document-menu-document-legacy')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Edit metadata'), findsNothing);
-      expect(find.text('Hapus dokumen'), findsNothing);
-      expect(find.text('Lihat metadata'), findsOneWidget);
-      expect(repo.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    },
-  );
 
   for (final refreshBeforeSave in [false, true]) {
     testWidgets(
@@ -288,11 +290,7 @@ void main() {
           expect(item.id, original.id);
           throw const RepositoryFailure(RepositoryIssue.revisionConflict);
         };
-        final store = await _pumpDocuments(
-          tester,
-          repo,
-          exerciseDeferredMutations: true,
-        );
+        final store = await _pumpDocuments(tester, repo);
         await tester.tap(
           find.byKey(const ValueKey('document-menu-document-conflict')),
         );
@@ -382,11 +380,7 @@ void main() {
             writeOutcomeUnknown: true,
           );
         };
-        final store = await _pumpDocuments(
-          tester,
-          repo,
-          exerciseDeferredMutations: true,
-        );
+        final store = await _pumpDocuments(tester, repo);
         await tester.tap(
           find.byKey(const ValueKey('document-menu-document-ambiguous-edit')),
         );
