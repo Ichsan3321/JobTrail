@@ -12,6 +12,7 @@ import 'package:jobtrail/models/application.dart';
 import 'package:jobtrail/models/recruitment_status.dart';
 import 'package:jobtrail/screens/schedule/schedule_screen.dart';
 
+import 'jobtrail_persistence_test.dart' show TestSession, mount;
 import 'support/fake_jobtrail_repository.dart';
 
 // S05 persistence (W13-023, W13-025, W13-026). Backend mode only, through a
@@ -63,6 +64,7 @@ final _crossing = Agenda(
   type: AgendaType.interview,
   scheduledAt: DateTime.utc(2026, 11, 24, 17, 30),
   locationOrLink: 'Google Meet',
+  revision: 1,
 );
 
 /// 09.00 WIB on the reference date: before the 10.00 WIB reference instant.
@@ -72,6 +74,7 @@ final _earlierToday = Agenda(
   type: AgendaType.test,
   scheduledAt: DateTime.utc(2026, 11, 24, 2),
   locationOrLink: 'Tes online',
+  revision: 1,
 );
 
 /// Parent is missing from the snapshot; it must never be rendered.
@@ -81,9 +84,10 @@ final _orphan = Agenda(
   type: AgendaType.interview,
   scheduledAt: DateTime.utc(2026, 11, 24, 5),
   locationOrLink: 'Kantor',
+  revision: 1,
 );
 
-typedef _SaveCall = ({Agenda agenda, SaveMode mode});
+typedef _SaveCall = ({Agenda agenda, SaveMode mode, int? expectedRevision});
 
 /// Server-like fake: committed agendas live in [rows]; every read returns a
 /// fresh snapshot of [apps] and [rows]. Saves are scripted per test.
@@ -125,28 +129,72 @@ class _ScheduleRepo extends FakeJobTrailRepository {
   ];
 
   /// Mirrors the create branch of `jobtrail_save_agenda`
-  /// (supabase/migrations/20261124000200_jobtrail_access.sql):
-  /// own row + same fingerprint → `replayed: true`; own row + different
-  /// fingerprint → JT004; ID held by another account → JT004; else insert.
+  /// (supabase/migrations/20261124000200_jobtrail_access.sql, with revisions
+  /// from 20261126000100_jobtrail_entity_revisions.sql, see
+  /// docs/ENTITY_REVISION_CONTRACT.md): own row + same fingerprint →
+  /// `replayed: true` with the row's current revision; own row + different
+  /// fingerprint → JT004; ID held by another account → JT004; else insert at
+  /// revision 1.
   AgendaReceipt commit(Agenda agenda, SaveMode mode) {
     final own = rows.where((row) => row.id == agenda.id).firstOrNull;
     if (own != null) {
       if (!listEquals(_fingerprint(own), _fingerprint(agenda))) {
         throw const RepositoryFailure(RepositoryIssue.createConflict);
       }
-      return (id: agenda.id, replayed: true);
+      return (id: agenda.id, revision: own.revision, replayed: true);
     }
     if (foreignIds.contains(agenda.id)) {
       throw const RepositoryFailure(RepositoryIssue.createConflict);
     }
-    rows.add(agenda);
-    return (id: agenda.id, replayed: false);
+    final row = Agenda(
+      id: agenda.id,
+      applicationId: agenda.applicationId,
+      type: agenda.type,
+      scheduledAt: agenda.scheduledAt,
+      locationOrLink: agenda.locationOrLink,
+      notes: agenda.notes,
+      revision: 1,
+    );
+    rows.add(row);
+    return (id: row.id, revision: row.revision, replayed: false);
   }
 
   @override
-  Future<AgendaReceipt> saveAgenda(Agenda agenda, SaveMode mode) async {
-    saves.add((agenda: agenda, mode: mode));
+  Future<AgendaReceipt> saveAgenda(
+    Agenda agenda,
+    SaveMode mode, {
+    int? expectedRevision,
+  }) async {
+    saves.add((agenda: agenda, mode: mode, expectedRevision: expectedRevision));
     return onSave(agenda, mode);
+  }
+
+  /// The next [count] reads fail like a dropped connection, then reads
+  /// return the server state again.
+  void failReads(int count) {
+    var left = count;
+    read = () {
+      if (left > 0) {
+        left--;
+        throw const RepositoryFailure(RepositoryIssue.network);
+      }
+      return current();
+    };
+  }
+
+  /// The next read waits for the returned completer (a slow response that
+  /// can outlive the route, tab or session that started it).
+  Completer<void> holdNextRead() {
+    final gate = Completer<void>();
+    var held = true;
+    read = () async {
+      if (held) {
+        held = false;
+        await gate.future;
+      }
+      return current();
+    };
+    return gate;
   }
 }
 
@@ -178,8 +226,9 @@ Future<void> _tapInSheet(WidgetTester tester, String key) async {
 }
 
 /// Opens the sheet and fills a valid agenda: Sinar Data, interview,
-/// 25 Nov 2026 10.00 WIB (03.00 UTC), "Kantor Sinar".
-Future<void> _fillSheet(WidgetTester tester) async {
+/// [day] Nov 2026 10.00 WIB, "Kantor Sinar". Day 30 falls in the next
+/// Sunday-based week, so revealing it visibly moves the week filter.
+Future<void> _fillSheet(WidgetTester tester, {String day = '25'}) async {
   await tester.tap(_key('schedule-add'));
   await tester.pumpAndSettle();
   expect(_key('add-agenda-sheet'), findsOneWidget);
@@ -188,7 +237,7 @@ Future<void> _fillSheet(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await _tapInSheet(tester, 'agenda-type-interview');
   await _tapInSheet(tester, 'agenda-date');
-  await tester.tap(find.text('25').last);
+  await tester.tap(find.text(day).last);
   await tester.tap(find.text('Pilih'));
   await tester.pumpAndSettle();
   await _tapInSheet(tester, 'agenda-time');
@@ -253,6 +302,8 @@ void main() {
       expect(repo.saves, hasLength(1));
       final sent = repo.saves.single;
       expect(sent.mode, SaveMode.create);
+      // Create omits p_expected_revision; the server starts the row at 1.
+      expect(sent.expectedRevision, isNull);
       // Backend IDs come from nextAgendaId() (UUID), not a local counter.
       expect(
         sent.agenda.id,
@@ -265,6 +316,7 @@ void main() {
       // The store reconciled from the server before announcing the save.
       expect(repo.reads, readsBefore + 1);
       expect(store.agendas.where((a) => a.id == sent.agenda.id), hasLength(1));
+      expect(store.agendaRevision(sent.agenda.id), 1);
 
       expect(_key('add-agenda-sheet'), findsNothing);
       expect(find.text('Agenda tersimpan: Rab, 25 Nov, 10.00 WIB'), findsOne);
@@ -390,24 +442,44 @@ void main() {
     ) async {
       final repo = _ScheduleRepo();
       final store = await _open(tester, repo);
-      var failNextRead = true;
+      final reads = repo.reads;
+      // The reconciling read after the write fails; the automatic re-read
+      // is held so the confirmed-but-stale state can be inspected.
+      late Completer<void> gate;
+      var failed = false;
       repo.read = () {
-        if (failNextRead) {
-          failNextRead = false;
+        if (!failed) {
+          failed = true;
+          gate = repo.holdNextRead();
           throw const RepositoryFailure(RepositoryIssue.network);
         }
         return repo.current();
       };
       await _fillSheet(tester);
-      await _tapInSheet(tester, 'agenda-save');
+      await tester.ensureVisible(_key('agenda-save'));
+      await tester.tap(_key('agenda-save'));
+      await tester.pump();
+      await tester.pump();
 
+      // Confirmed on the server: the sheet says so and offers no write.
+      expect(_key('add-agenda-sheet'), findsOneWidget);
       expect(_key('agenda-saved-stale'), findsOneWidget);
+      expect(find.textContaining('Agenda tersimpan di server'), findsOne);
+      expect(_saveLabel(tester), 'Tersimpan');
+      expect(_enabled(tester, 'agenda-save'), isFalse);
+      expect(repo.reads, reads + 2);
+
+      gate.complete();
+      await tester.pumpAndSettle();
       expect(_key('add-agenda-sheet'), findsNothing);
       // The committed write is never repeated; only the snapshot is reloaded.
       expect(repo.saves, hasLength(1));
+      expect(repo.reads, reads + 2);
       expect(store.phase, StorePhase.ready);
       final id = repo.saves.single.agenda.id;
       expect(store.agendas.where((a) => a.id == id), hasLength(1));
+      expect(find.text('Agenda tersimpan: Rab, 25 Nov, 10.00 WIB'), findsOne);
+      expect(_key('agenda-$id'), findsOneWidget);
     });
 
     testWidgets('definitive rejection unlocks the form and claims nothing', (
@@ -437,43 +509,43 @@ void main() {
       expect(_key('add-agenda-sheet'), findsNothing);
     });
 
-    testWidgets('lost response + failed reload: identical retry replays', (
-      tester,
-    ) async {
-      final repo = _ScheduleRepo();
-      final store = await _open(tester, repo);
-      var attempt = 0;
-      repo.onSave = (agenda, mode) {
-        final receipt = repo.commit(agenda, mode);
-        if (++attempt == 1) {
-          // Committed on the server, but the client never sees the receipt
-          // and the reconciling read fails too.
-          repo.read = () =>
-              throw const RepositoryFailure(RepositoryIssue.network);
-          throw const RepositoryFailure(
-            RepositoryIssue.network,
-            writeOutcomeUnknown: true,
-          );
-        }
-        return receipt;
-      };
-      await _fillSheet(tester);
-      await _tapInSheet(tester, 'agenda-save');
-      expect(_saveLabel(tester), 'Kirim ulang');
+    testWidgets(
+      'late commit after a proven absence: identical resend replays',
+      (tester) async {
+        final repo = _ScheduleRepo();
+        final store = await _open(tester, repo);
+        Agenda? lateIntent;
+        repo.onSave = (agenda, mode) {
+          if (lateIntent == null) {
+            // The response is lost and the reconciling read still sees no row;
+            // the server applies the request only after that read.
+            lateIntent = agenda;
+            throw const RepositoryFailure(
+              RepositoryIssue.network,
+              writeOutcomeUnknown: true,
+            );
+          }
+          return repo.commit(agenda, mode);
+        };
+        await _fillSheet(tester);
+        await _tapInSheet(tester, 'agenda-save');
+        expect(_saveLabel(tester), 'Kirim ulang');
+        expect(_enabled(tester, 'agenda-save'), isTrue);
+        expect(_key('agenda-reload'), findsNothing);
+        repo.commit(lateIntent!, SaveMode.create);
 
-      repo.read = repo.current;
-      await store.refresh();
-      await tester.pumpAndSettle();
-      // The reload made the row visible, but the sheet still holds the intent;
-      // resending it must replay, never conflict or duplicate.
-      await _tapInSheet(tester, 'agenda-save');
-      expect(repo.saves, hasLength(2));
-      _expectSamePayload(repo.saves[0].agenda, repo.saves[1].agenda);
-      final id = repo.saves.first.agenda.id;
-      expect(repo.rows.where((row) => row.id == id), hasLength(1));
-      expect(_key('add-agenda-sheet'), findsNothing);
-      expect(find.textContaining('Agenda tersimpan'), findsOne);
-    });
+        // Resending the pinned intent must replay, never conflict or duplicate.
+        await _tapInSheet(tester, 'agenda-save');
+        expect(repo.saves, hasLength(2));
+        _expectSamePayload(repo.saves[0].agenda, repo.saves[1].agenda);
+        expect(repo.saves[1].expectedRevision, isNull);
+        final id = repo.saves.first.agenda.id;
+        expect(repo.rows.where((row) => row.id == id), hasLength(1));
+        expect(store.agendaRevision(id), 1);
+        expect(_key('add-agenda-sheet'), findsNothing);
+        expect(find.textContaining('Agenda tersimpan'), findsOne);
+      },
+    );
 
     testWidgets('createConflict on an identical retry is not a save', (
       tester,
@@ -588,6 +660,365 @@ void main() {
         findsOne,
       );
     });
+  });
+
+  group('W13-026 recovery through the sheet (read before any resend)', () {
+    testWidgets('read fails → Muat ulang → ID found → saved, no second write', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      final store = await _open(tester, repo);
+      repo.onSave = (agenda, mode) {
+        // Committed on the server; the response is lost and both the
+        // reconciling read and the first reload fail.
+        repo.commit(agenda, mode);
+        repo.failReads(2);
+        throw const RepositoryFailure(
+          RepositoryIssue.network,
+          writeOutcomeUnknown: true,
+        );
+      };
+      await _fillSheet(tester);
+      await _tapInSheet(tester, 'agenda-save');
+
+      expect(store.phase, StorePhase.error);
+      expect(_key('add-agenda-sheet'), findsOneWidget);
+      expect(find.textContaining('Agenda tersimpan'), findsNothing);
+      expect(find.textContaining('Ketuk "Muat ulang"'), findsOne);
+      expect(_key('agenda-reload'), findsOneWidget);
+      // Without a fresh snapshot there is no proof of absence: no resend.
+      expect(_saveLabel(tester), 'Kirim ulang');
+      expect(_enabled(tester, 'agenda-save'), isFalse);
+      await tester.tap(_key('agenda-save'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(repo.saves, hasLength(1));
+
+      // A failed reload keeps the intent pinned and still writes nothing.
+      final reads = repo.reads;
+      await _tapInSheet(tester, 'agenda-reload');
+      expect(repo.reads, reads + 1);
+      expect(_key('add-agenda-sheet'), findsOneWidget);
+      expect(_key('agenda-reload'), findsOneWidget);
+      expect(_enabled(tester, 'agenda-save'), isFalse);
+
+      await _tapInSheet(tester, 'agenda-reload');
+      expect(repo.reads, reads + 2);
+      expect(repo.saves, hasLength(1));
+      final id = repo.saves.single.agenda.id;
+      expect(repo.rows.where((row) => row.id == id), hasLength(1));
+      expect(store.phase, StorePhase.ready);
+      expect(_key('add-agenda-sheet'), findsNothing);
+      expect(find.text('Agenda tersimpan: Rab, 25 Nov, 10.00 WIB'), findsOne);
+      expect(_key('agenda-$id'), findsOneWidget);
+    });
+
+    testWidgets('read fails → Muat ulang → ID absent → Kirim ulang resends '
+        'the same ID and payload', (tester) async {
+      final repo = _ScheduleRepo();
+      final store = await _open(tester, repo);
+      repo.onSave = (agenda, mode) {
+        // Nothing committed; the reconciling read fails.
+        repo.failReads(1);
+        throw const RepositoryFailure(
+          RepositoryIssue.network,
+          writeOutcomeUnknown: true,
+        );
+      };
+      await _fillSheet(tester);
+      await _tapInSheet(tester, 'agenda-save');
+      expect(_key('agenda-reload'), findsOneWidget);
+      expect(_enabled(tester, 'agenda-save'), isFalse);
+
+      await _tapInSheet(tester, 'agenda-reload');
+      // The fresh snapshot proves the ID absent: resend unlocked, not sent.
+      expect(store.phase, StorePhase.ready);
+      expect(repo.saves, hasLength(1));
+      expect(_key('agenda-reload'), findsNothing);
+      expect(_saveLabel(tester), 'Kirim ulang');
+      expect(_enabled(tester, 'agenda-save'), isTrue);
+      expect(find.textContaining('agenda yang sama'), findsOne);
+      final location = tester.widget<TextField>(
+        find.descendant(
+          of: _key('agenda-location'),
+          matching: find.byType(TextField),
+        ),
+      );
+      expect(location.readOnly, isTrue);
+
+      repo.onSave = repo.commit;
+      await _tapInSheet(tester, 'agenda-save');
+      expect(repo.saves, hasLength(2));
+      _expectSamePayload(repo.saves[0].agenda, repo.saves[1].agenda);
+      expect(repo.saves[1].mode, SaveMode.create);
+      expect(repo.saves[1].expectedRevision, isNull);
+      final id = repo.saves.first.agenda.id;
+      expect(repo.rows.where((row) => row.id == id), hasLength(1));
+      expect(_key('add-agenda-sheet'), findsNothing);
+      expect(find.text('Agenda tersimpan: Rab, 25 Nov, 10.00 WIB'), findsOne);
+    });
+
+    testWidgets('confirmed receipt + stale snapshot: recovery only reads', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      final store = await _open(tester, repo);
+      repo.onSave = (agenda, mode) {
+        final receipt = repo.commit(agenda, mode);
+        // Reconciling read, automatic re-read and first manual reload fail.
+        repo.failReads(3);
+        return receipt;
+      };
+      await _fillSheet(tester);
+      final reads = repo.reads;
+      await _tapInSheet(tester, 'agenda-save');
+
+      expect(repo.reads, reads + 2);
+      expect(store.phase, StorePhase.error);
+      expect(_key('add-agenda-sheet'), findsOneWidget);
+      expect(_key('agenda-saved-stale'), findsOneWidget);
+      expect(_key('agenda-reload'), findsOneWidget);
+      expect(_saveLabel(tester), 'Tersimpan');
+      expect(_enabled(tester, 'agenda-save'), isFalse);
+      expect(
+        find.descendant(
+          of: _key('agenda-cancel'),
+          matching: find.text('Tutup'),
+        ),
+        findsOne,
+      );
+      await tester.tap(_key('agenda-save'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      await _tapInSheet(tester, 'agenda-reload');
+      expect(repo.reads, reads + 3);
+      expect(_key('add-agenda-sheet'), findsOneWidget);
+      expect(_key('agenda-reload'), findsOneWidget);
+
+      await _tapInSheet(tester, 'agenda-reload');
+      expect(repo.reads, reads + 4);
+      // Zero additional writes across every recovery step.
+      expect(repo.saves, hasLength(1));
+      final id = repo.saves.single.agenda.id;
+      expect(store.agendaRevision(id), 1);
+      expect(_key('add-agenda-sheet'), findsNothing);
+      expect(find.text('Agenda tersimpan: Rab, 25 Nov, 10.00 WIB'), findsOne);
+      expect(_key('agenda-$id'), findsOneWidget);
+    });
+
+    testWidgets('confirmed agenda missing from a fresh read is never resent', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      await _open(tester, repo);
+      repo.onSave = (agenda, mode) {
+        final receipt = repo.commit(agenda, mode);
+        repo.failReads(2);
+        return receipt;
+      };
+      await _fillSheet(tester);
+      await _tapInSheet(tester, 'agenda-save');
+      // Deleted elsewhere before the reload succeeds.
+      repo.rows.removeWhere((row) => row.id == repo.saves.single.agenda.id);
+      await _tapInSheet(tester, 'agenda-reload');
+
+      expect(find.textContaining('tidak ada pada data terbaru'), findsOne);
+      expect(_key('agenda-reload'), findsNothing);
+      expect(_enabled(tester, 'agenda-save'), isFalse);
+      await _tapInSheet(tester, 'agenda-cancel');
+      expect(_key('add-agenda-sheet'), findsNothing);
+      expect(repo.saves, hasLength(1));
+      expect(find.byType(SnackBar), findsNothing);
+    });
+
+    testWidgets('saved ID is kept until a read finds it, then revealed', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      final store = await _open(tester, repo);
+      repo.onSave = (agenda, mode) {
+        final receipt = repo.commit(agenda, mode);
+        repo.failReads(2);
+        return receipt;
+      };
+      // 30 Nov is in the next week: revealing it moves the week filter.
+      await _fillSheet(tester, day: '30');
+      await _tapInSheet(tester, 'agenda-save');
+      final id = repo.saves.single.agenda.id;
+      expect(_key('schedule-day-2026-11-30'), findsNothing);
+
+      // Closing a confirmed sheet needs no discard and starts a read. That
+      // read fails as well, so the saved ID is kept, not revealed.
+      final reads = repo.reads;
+      repo.failReads(1);
+      await _tapInSheet(tester, 'agenda-cancel');
+      expect(_key('agenda-discard-dialog'), findsNothing);
+      expect(_key('add-agenda-sheet'), findsNothing);
+      expect(repo.reads, reads + 1);
+      expect(store.phase, StorePhase.error);
+      expect(store.agendaById(id), isNull);
+      // Not in the snapshot yet: no feedback, no filter change.
+      expect(find.byType(SnackBar), findsNothing);
+      expect(_key('schedule-day-2026-11-24'), findsOneWidget);
+      expect(_key('schedule-day-2026-11-30'), findsNothing);
+
+      // The shell's own retry reads again; the kept ID is now revealed.
+      await tester.tap(find.text('Coba lagi'));
+      await tester.pumpAndSettle();
+      expect(repo.saves, hasLength(1));
+      expect(_key('schedule-day-2026-11-30'), findsOneWidget);
+      expect(_key('schedule-day-2026-11-24'), findsNothing);
+      expect(_key('agenda-$id'), findsOneWidget);
+      expect(find.text('Agenda tersimpan: Sen, 30 Nov, 10.00 WIB'), findsOne);
+    });
+  });
+
+  group('W13-026 late completion has a single owner', () {
+    AppNavigation nav(WidgetTester tester) =>
+        tester.widget<ScheduleScreen>(find.byType(ScheduleScreen)).navigation;
+
+    /// Confirmed write, both reads failed, sheet closed while the read that
+    /// closing starts is still in flight. Returns that read's gate.
+    Future<Completer<void>> closedAwaitingRead(
+      WidgetTester tester,
+      _ScheduleRepo repo,
+    ) async {
+      repo.onSave = (agenda, mode) {
+        final receipt = repo.commit(agenda, mode);
+        repo.failReads(2);
+        return receipt;
+      };
+      await _fillSheet(tester, day: '30');
+      await _tapInSheet(tester, 'agenda-save');
+      final gate = repo.holdNextRead();
+      await _tapInSheet(tester, 'agenda-cancel');
+      expect(_key('add-agenda-sheet'), findsNothing);
+      return gate;
+    }
+
+    void expectNoFeedback(WidgetTester tester) {
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.textContaining('Agenda tersimpan'), findsNothing);
+    }
+
+    testWidgets('sheet route closed while the save is in flight', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      final pending = Completer<AgendaReceipt>();
+      repo.onSave = (_, _) => pending.future;
+      final store = await _open(tester, repo);
+      await _fillSheet(tester, day: '30');
+      await tester.ensureVisible(_key('agenda-save'));
+      await tester.tap(_key('agenda-save'));
+      await tester.pump();
+      // Navigation closes the modal route even while a request is pending.
+      nav(tester).showTab(AppTab.schedule);
+      await tester.pumpAndSettle();
+      expect(_key('add-agenda-sheet'), findsNothing);
+
+      pending.complete(repo.commit(repo.saves.single.agenda, SaveMode.create));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(repo.saves, hasLength(1));
+      expect(store.agendaById(repo.saves.single.agenda.id), isNotNull);
+      expectNoFeedback(tester);
+      expect(_key('schedule-day-2026-11-24'), findsOneWidget);
+      expect(_key('schedule-day-2026-11-30'), findsNothing);
+    });
+
+    testWidgets('route no longer current when the read finds the ID', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      final store = await _open(tester, repo);
+      final navigation = nav(tester);
+      final gate = await closedAwaitingRead(tester, repo);
+      unawaited(navigation.openDetail('app-a'));
+      await tester.pumpAndSettle();
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(store.agendaById(repo.saves.single.agenda.id), isNotNull);
+      expectNoFeedback(tester);
+      navigation.back();
+      await tester.pumpAndSettle();
+      expectNoFeedback(tester);
+      expect(_key('schedule-day-2026-11-24'), findsOneWidget);
+      expect(_key('schedule-day-2026-11-30'), findsNothing);
+      expect(repo.saves, hasLength(1));
+    });
+
+    testWidgets('Schedule tab no longer active when the read finds the ID', (
+      tester,
+    ) async {
+      final repo = _ScheduleRepo();
+      final store = await _open(tester, repo);
+      final navigation = nav(tester);
+      final gate = await closedAwaitingRead(tester, repo);
+      navigation.showTab(AppTab.home);
+      await tester.pumpAndSettle();
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(store.agendaById(repo.saves.single.agenda.id), isNotNull);
+      expectNoFeedback(tester);
+      navigation.showTab(AppTab.schedule);
+      await tester.pumpAndSettle();
+      expectNoFeedback(tester);
+      expect(_key('schedule-day-2026-11-24'), findsOneWidget);
+      expect(_key('schedule-day-2026-11-30'), findsNothing);
+      expect(repo.saves, hasLength(1));
+    });
+
+    for (final switchAccount in [false, true]) {
+      testWidgets(
+        'save completing after ${switchAccount ? 'account switch' : 'logout'}'
+        ' gives no feedback',
+        (tester) async {
+          final session = TestSession();
+          final repo = _ScheduleRepo();
+          final other = _ScheduleRepo(apps: [_appB], rows: []);
+          final pending = Completer<AgendaReceipt>();
+          repo.onSave = (_, _) => pending.future;
+          await mount(tester, session, (id) => id == 'owner-a' ? repo : other);
+          await tester.pumpAndSettle();
+          await tester.tap(_key('nav-schedule'));
+          await tester.pumpAndSettle();
+          await _fillSheet(tester, day: '30');
+          await tester.ensureVisible(_key('agenda-save'));
+          await tester.tap(_key('agenda-save'));
+          await tester.pump();
+          expect(repo.saves, hasLength(1));
+
+          if (switchAccount) {
+            session.changes.add(session.signedIn('owner-b'));
+          } else {
+            await session.signOut();
+          }
+          await tester.pumpAndSettle();
+          expect(repo.disposed, isTrue);
+          expect(_key('add-agenda-sheet'), findsNothing);
+
+          // The server accepted the request; the old session must not react.
+          final agenda = repo.saves.single.agenda;
+          pending.complete(repo.commit(agenda, SaveMode.create));
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(repo.saves, hasLength(1));
+          expect(other.saves, isEmpty);
+          expectNoFeedback(tester);
+          if (switchAccount) {
+            await tester.tap(_key('nav-schedule'));
+            await tester.pumpAndSettle();
+            expect(_key('agenda-${agenda.id}'), findsNothing);
+            expect(_key('schedule-day-2026-11-30'), findsNothing);
+            expectNoFeedback(tester);
+          } else {
+            expect(find.byType(ScheduleScreen), findsNothing);
+          }
+        },
+      );
+    }
   });
 
   group('W13-025 snapshot reading, WIB dates and Detail scope', () {
