@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../core/activity_streak.dart';
 import '../../core/constants/app_dates.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../data/jobtrail_store.dart';
@@ -640,6 +641,12 @@ class _AchievementMetrics extends StatelessWidget {
     final achieved = store.weeklyAchieved;
     final target = store.weeklyGoal.target;
     final progress = store.weeklyProgress;
+    // Activity streak uses the full account snapshot and shared WIB referenceDate,
+    // matching HomeScreen and staying independent of the selected period filter.
+    final streak = calculateActivityStreak(
+      referenceDate: store.referenceDate,
+      appliedDates: store.applications.map((app) => app.appliedAt),
+    );
 
     // Interview conversion: count apps with a recorded Interview event
     // in StatusHistory. Do NOT assume Offering implies Interview —
@@ -720,14 +727,16 @@ class _AchievementMetrics extends StatelessWidget {
           ),
           const Divider(height: AppSpacing.lg, color: AppColors.border),
 
-          // Streak — requires weekly history data.
+          // Activity streak — computed from full account snapshot, matching Home.
           _MetricTile(
             icon: Icons.local_fire_department_rounded,
             iconColor: const Color(0xFFEF4444),
             label: 'Streak Mingguan',
-            value: 'Belum tersedia',
-            subtitle: 'Memerlukan data history mingguan',
-            dimmed: true,
+            value: '${streak.consecutiveWeeks} minggu berturut-turut',
+            subtitle: streak.hasActivity
+                ? 'Satu lamaran tercatat membuat minggu aktif. Dihitung dari seluruh riwayat akun.'
+                : 'Belum ada aktivitas lamaran tercatat.',
+            dimmed: !streak.hasActivity,
           ),
         ],
       ),

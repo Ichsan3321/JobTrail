@@ -45,6 +45,14 @@ Future<void> _openStatistics(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _selectPeriod(WidgetTester tester, String label) async {
+  final chip = find.text(label);
+  await tester.ensureVisible(chip);
+  await tester.pumpAndSettle();
+  await tester.tap(chip);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _triggerAccountRefresh(WidgetTester tester) async {
   await tester.tap(find.byKey(const ValueKey('nav-home')));
   await tester.pumpAndSettle();
@@ -387,4 +395,240 @@ void main() {
     expect(_summaryValue(tester, 'total'), '1');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'activity streak matches Home from full snapshot and stays independent of period',
+    (tester) async {
+      final refUtc = DateTime.utc(2026, 11, 26, 2); // Thu 26 Nov 2026 WIB
+      final fullStreakApps = [
+        _app(
+          'w1',
+          company: 'W1',
+          appliedAt: DateTime.utc(2026, 10, 19),
+          status: RecruitmentStatus.applied,
+        ),
+        _app(
+          'w2',
+          company: 'W2',
+          appliedAt: DateTime.utc(2026, 10, 26),
+          status: RecruitmentStatus.applied,
+        ),
+        _app(
+          'w3',
+          company: 'W3',
+          appliedAt: DateTime.utc(2026, 11, 2),
+          status: RecruitmentStatus.applied,
+        ),
+        _app(
+          'w4',
+          company: 'W4',
+          appliedAt: DateTime.utc(2026, 11, 9),
+          status: RecruitmentStatus.applied,
+        ),
+        _app(
+          'w5',
+          company: 'W5',
+          appliedAt: DateTime.utc(2026, 11, 16),
+          status: RecruitmentStatus.applied,
+        ),
+        _app(
+          'w6',
+          company: 'W6',
+          appliedAt: DateTime.utc(2026, 11, 23),
+          status: RecruitmentStatus.applied,
+        ),
+      ];
+
+      var current = _snapshotAt(refUtc, fullStreakApps);
+      final repo = FakeJobTrailRepository(() => current);
+      await mount(tester, TestSession(), (_) => repo);
+      await tester.pumpAndSettle();
+
+      // Home displays 6-week streak.
+      expect(find.text('Streak · 6 minggu'), findsOneWidget);
+
+      await _openStatistics(tester);
+      final statsScroll = find
+          .descendant(
+            of: find.byType(StatisticsScreen),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+
+      await tester.scrollUntilVisible(
+        find.text('Streak Mingguan'),
+        150,
+        scrollable: statsScroll,
+      );
+      expect(find.text('6 minggu berturut-turut'), findsOneWidget);
+
+      // Select 1 Bulan Terakhir (2026-10-26): excludes w1 (Oct 19), total=5,
+      // but Streak Mingguan still reflects the full 6-week account snapshot.
+      tester.state<ScrollableState>(statsScroll).position.jumpTo(0);
+      await tester.pumpAndSettle();
+      await _selectPeriod(tester, '1 Bulan Terakhir');
+      expect(_summaryValue(tester, 'total'), '5');
+
+      await tester.scrollUntilVisible(
+        find.text('Streak Mingguan'),
+        150,
+        scrollable: statsScroll,
+      );
+      expect(find.text('6 minggu berturut-turut'), findsOneWidget);
+
+      // Refresh with a gap in Nov 9 -> both Home and Statistics drop to 2 weeks.
+      current = _snapshotAt(
+        refUtc,
+        fullStreakApps.where((app) => app.id != 'w4').toList(),
+      );
+      await _triggerAccountRefresh(tester);
+
+      await tester.scrollUntilVisible(
+        find.text('Streak Mingguan'),
+        150,
+        scrollable: statsScroll,
+      );
+      expect(find.text('2 minggu berturut-turut'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('nav-home')));
+      await tester.pumpAndSettle();
+      expect(find.text('Streak · 2 minggu'), findsOneWidget);
+    },
+  );
+
+  testWidgets('activity streak respects WIB rollover across UTC 17:00', (
+    tester,
+  ) async {
+    final apps = [
+      _app(
+        's1',
+        company: 'S1',
+        appliedAt: DateTime.utc(2026, 11, 10),
+        status: RecruitmentStatus.applied,
+      ),
+      _app(
+        's2',
+        company: 'S2',
+        appliedAt: DateTime.utc(2026, 11, 17),
+        status: RecruitmentStatus.applied,
+      ),
+    ];
+
+    // Sun 22 Nov 23:59:59 WIB -> current week Nov 16..22 active => 2 weeks.
+    var current = _snapshotAt(DateTime.utc(2026, 11, 22, 16, 59, 59), apps);
+    final repo = FakeJobTrailRepository(() => current);
+    await mount(tester, TestSession(), (_) => repo);
+    await tester.pumpAndSettle();
+
+    await _openStatistics(tester);
+    final statsScroll = find
+        .descendant(
+          of: find.byType(StatisticsScreen),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('Streak Mingguan'),
+      150,
+      scrollable: statsScroll,
+    );
+    expect(find.text('2 minggu berturut-turut'), findsOneWidget);
+
+    // Mon 23 Nov 00:00:00 WIB -> current week Nov 23..29 pending => still 2 weeks.
+    current = _snapshotAt(DateTime.utc(2026, 11, 22, 17), apps);
+    await _triggerAccountRefresh(tester);
+    await tester.scrollUntilVisible(
+      find.text('Streak Mingguan'),
+      150,
+      scrollable: statsScroll,
+    );
+    expect(find.text('2 minggu berturut-turut'), findsOneWidget);
+
+    // Mon 30 Nov 00:00:00 WIB -> Nov 23..29 completed inactive => 0 weeks.
+    current = _snapshotAt(DateTime.utc(2026, 11, 29, 17), apps);
+    await _triggerAccountRefresh(tester);
+    await tester.scrollUntilVisible(
+      find.text('Streak Mingguan'),
+      150,
+      scrollable: statsScroll,
+    );
+    expect(find.text('0 minggu berturut-turut'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('nav-home')));
+    await tester.pumpAndSettle();
+    expect(find.text('Streak · 0 minggu'), findsOneWidget);
+  });
+
+  testWidgets(
+    '2-month and 3-month period boundaries keep denominator consistent',
+    (tester) async {
+      final refUtc = DateTime.utc(2026, 11, 17, 5); // 17 Nov 2026 WIB
+      final apps = [
+        _app(
+          'out-3m',
+          company: 'Out 3M',
+          appliedAt: DateTime.utc(2026, 8, 16),
+          status: RecruitmentStatus.rejected,
+        ),
+        _app(
+          'in-3m',
+          company: 'In 3M',
+          appliedAt: DateTime.utc(2026, 8, 17),
+          status: RecruitmentStatus.applied,
+        ),
+        _app(
+          'in-3m-2',
+          company: 'In 3M 2',
+          appliedAt: DateTime.utc(2026, 9, 16),
+          status: RecruitmentStatus.screening,
+        ),
+        _app(
+          'in-2m',
+          company: 'In 2M',
+          appliedAt: DateTime.utc(2026, 9, 17),
+          status: RecruitmentStatus.interview,
+        ),
+        _app(
+          'in-1m',
+          company: 'In 1M',
+          appliedAt: DateTime.utc(2026, 10, 17),
+          status: RecruitmentStatus.offering,
+        ),
+        _app(
+          'now',
+          company: 'Now',
+          appliedAt: DateTime.utc(2026, 11, 15),
+          status: RecruitmentStatus.interview,
+        ),
+      ];
+
+      final repo = FakeJobTrailRepository(() => _snapshotAt(refUtc, apps));
+      await mount(tester, TestSession(), (_) => repo);
+      await tester.pumpAndSettle();
+      await _openStatistics(tester);
+
+      // Saat Ini: all 6, Interview=2, Offering=1.
+      expect(_summaryValue(tester, 'total'), '6');
+      expect(_summaryValue(tester, 'interview'), '2');
+      expect(_summaryValue(tester, 'offering'), '1');
+
+      // 3 Bulan Terakhir (start 17 Aug): 5 apps, Interview=2, Offering=1.
+      await _selectPeriod(tester, '3 Bulan Terakhir');
+      expect(_summaryValue(tester, 'total'), '5');
+      expect(_summaryValue(tester, 'interview'), '2');
+      expect(_summaryValue(tester, 'offering'), '1');
+
+      // 2 Bulan Terakhir (start 17 Sep): 3 apps, Interview=2, Offering=1.
+      await _selectPeriod(tester, '2 Bulan Terakhir');
+      expect(_summaryValue(tester, 'total'), '3');
+      expect(_summaryValue(tester, 'interview'), '2');
+      expect(_summaryValue(tester, 'offering'), '1');
+
+      // 1 Bulan Terakhir (start 17 Oct): 2 apps, Interview=1, Offering=1.
+      await _selectPeriod(tester, '1 Bulan Terakhir');
+      expect(_summaryValue(tester, 'total'), '2');
+      expect(_summaryValue(tester, 'interview'), '1');
+      expect(_summaryValue(tester, 'offering'), '1');
+    },
+  );
 }
