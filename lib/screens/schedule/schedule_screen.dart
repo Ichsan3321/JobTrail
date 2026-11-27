@@ -51,41 +51,117 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  /// A saved agenda waiting to be revealed. Kept until a read contains it,
+  /// and only for the store (account session) that saved it.
+  String? _revealId;
+  JobTrailStore? _revealStore;
+
   @override
   void initState() {
     super.initState();
     widget.navigation.addListener(_onNavigation);
+    widget.store.addListener(_onStore);
+  }
+
+  @override
+  void didUpdateWidget(covariant ScheduleScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.store, widget.store)) {
+      oldWidget.store.removeListener(_onStore);
+      widget.store.addListener(_onStore);
+      _clearReveal();
+    }
+    if (!identical(oldWidget.navigation, widget.navigation)) {
+      oldWidget.navigation.removeListener(_onNavigation);
+      widget.navigation.addListener(_onNavigation);
+      _clearReveal();
+    }
   }
 
   void _onNavigation() {
+    // Leaving the tab gives up ownership of any late saved feedback.
+    if (!_isActiveTab) _clearReveal();
     if (widget.navigation.selectedTab == AppTab.schedule &&
         widget.navigation.scheduleApplicationId != null) {
       _relatedType = null;
     }
   }
 
+  void _onStore() => _tryReveal();
+
   @override
   void dispose() {
     widget.navigation.removeListener(_onNavigation);
+    widget.store.removeListener(_onStore);
     super.dispose();
   }
 
+  void _clearReveal() {
+    _revealId = null;
+    _revealStore = null;
+  }
+
+  /// Read live navigation state, not the IndexedStack's shared route state
+  /// (same rule as S06 `isActiveTab`).
+  bool get _isActiveTab => widget.navigation.selectedTab == AppTab.schedule;
+
+  /// Late feedback (snackbar, week/filter change) is owned by this screen
+  /// only while it is mounted, its route is current, the Schedule tab is
+  /// active and the store is the one of the session that saved the agenda.
+  bool _ownsFeedback(JobTrailStore? owner) =>
+      mounted &&
+      identical(store, owner) &&
+      _isActiveTab &&
+      (ModalRoute.of(context)?.isCurrent ?? false);
+
   JobTrailStore get store => widget.store;
+
+  /// Mock writes in memory; backend creates via `saveAgendaRemote` once a
+  /// snapshot exists (the sheet lists applications from that snapshot).
+  bool get _canAdd =>
+      store.allowsLocalWrites || (store.isConnected && store.hasSnapshot);
 
   /// Opens the add sheet prefilled with the selected date (week view) or the
   /// related application (Agenda Terkait view), then focuses the new agenda.
   Future<void> _openAddSheet() async {
     final appFilter = widget.navigation.scheduleApplicationId;
-    final messenger = ScaffoldMessenger.of(context);
+    final owner = store;
+    _clearReveal();
     final id = await showAddAgendaSheet(
       context,
-      store: store,
+      store: owner,
       initialDate: appFilter == null ? _selectedDate : null,
       initialApplicationId: appFilter,
     );
-    if (!mounted || id == null) return;
-    final agenda = store.agendas.where((a) => a.id == id).firstOrNull;
-    if (agenda == null) return;
+    if (id == null || !_ownsFeedback(owner)) return;
+    _revealId = id;
+    _revealStore = owner;
+    _tryReveal();
+  }
+
+  /// Reveals [_revealId] once the snapshot contains it. A confirmed write
+  /// whose reconciling read failed stays pending until a later read succeeds;
+  /// a successful read without the ID (deleted elsewhere) drops it.
+  void _tryReveal() {
+    final id = _revealId;
+    final owner = _revealStore;
+    if (id == null || store.isRefreshing || store.isMutating) return;
+    final agenda = store.agendaById(id);
+    if (agenda == null) {
+      if (store.phase != StorePhase.error) _clearReveal();
+      return;
+    }
+    _clearReveal();
+    if (!_ownsFeedback(owner) ||
+        store.applicationById(agenda.applicationId) == null) {
+      return;
+    }
+    _reveal(agenda);
+  }
+
+  void _reveal(Agenda agenda) {
+    final appFilter = widget.navigation.scheduleApplicationId;
+    final messenger = ScaffoldMessenger.of(context);
     final date = _dateOf(agenda);
     final stayRelated = appFilter == agenda.applicationId;
     if (appFilter != null && !stayRelated) {
@@ -268,7 +344,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             child: InkWell(
               key: const ValueKey('schedule-add'),
               borderRadius: BorderRadius.circular(AppRadius.button),
-              onTap: widget.store.allowsLocalWrites ? _openAddSheet : null,
+              onTap: _canAdd ? _openAddSheet : null,
               child: const SizedBox(
                 width: 48,
                 height: 48,
@@ -824,7 +900,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             const SizedBox(height: AppSpacing.md),
             FilledButton(
               key: const ValueKey('schedule-empty-add'),
-              onPressed: widget.store.allowsLocalWrites ? _openAddSheet : null,
+              onPressed: _canAdd ? _openAddSheet : null,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 minimumSize: const Size(180, 48),
