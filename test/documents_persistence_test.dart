@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jobtrail/app.dart';
 import 'package:jobtrail/core/routes/app_navigation.dart';
 import 'package:jobtrail/core/theme/app_theme.dart';
 import 'package:jobtrail/data/jobtrail_repository.dart';
 import 'package:jobtrail/data/jobtrail_store.dart';
 import 'package:jobtrail/models/app_document.dart';
+import 'package:jobtrail/screens/auth/auth_provider.dart';
 import 'package:jobtrail/screens/documents/documents_screen.dart';
 import 'package:jobtrail/widgets/app_shell.dart';
 
@@ -99,7 +101,236 @@ Future<void> _save(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+// Use the actual account scope: it replaces AppShell after an auth failure
+// but keeps the Navigator alive until logout or account replacement.
+class _RecoverySession extends UnavailableAuthProvider
+    implements SessionAuthProvider {
+  final _events = StreamController<AuthSession>.broadcast();
+  AuthSession _session = AuthSession.authenticated(
+    'documents-a',
+    DateTime.now().add(const Duration(hours: 1)),
+  );
+
+  @override
+  Stream<AuthSession> get sessionChanges => _events.stream;
+
+  @override
+  Future<AuthSession> readSession() async => _session;
+
+  void switchAccount() {
+    _session = AuthSession.authenticated(
+      'documents-b',
+      DateTime.now().add(const Duration(hours: 1)),
+    );
+    _events.add(_session);
+  }
+
+  @override
+  Future<void> signOut() async {
+    _session = const AuthSession.signedOut();
+    _events.add(_session);
+  }
+
+  @override
+  void dispose() => unawaited(_events.close());
+}
+
+Future<_RecoverySession> _mountRecoveryAccount(
+  WidgetTester tester,
+  _DocumentRepository repo, {
+  FakeJobTrailRepository? replacement,
+}) async {
+  tester.view.physicalSize = const Size(393, 852);
+  tester.view.devicePixelRatio = 1;
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+  final provider = _RecoverySession();
+  await tester.pumpWidget(
+    JobTrailApp(
+      authProvider: provider,
+      disposeSessionProvider: true,
+      repositoryFactory: (userId) {
+        if (userId == 'documents-a') return repo;
+        expect(userId, 'documents-b');
+        return replacement!;
+      },
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey('nav-documents')));
+  await tester.pumpAndSettle();
+  return provider;
+}
+
+AppDocument _authRecoveryDocument() => AppDocument(
+  id: 'document-auth-recovery',
+  revision: 4,
+  title: 'CV Sebelum Recovery',
+  category: DocumentCategory.cvResume,
+  fileName: 'cv.pdf',
+  version: '1.0',
+  updatedAt: _instant,
+);
+
+Future<void> _openRecoveryEdit(WidgetTester tester) async {
+  await tester.tap(
+    find.byKey(const ValueKey('document-menu-document-auth-recovery')),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Edit metadata'));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byType(TextFormField).first, 'CV Draft Recovery');
+}
+
+Future<void> _tapAndSettle(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  testWidgets('update auth error allows discard and account retry', (
+    tester,
+  ) async {
+    final repo = _DocumentRepository();
+    final original = _authRecoveryDocument();
+    repo.read = () => _snapshot([original]);
+    repo.write = (_, _, _) =>
+        throw const RepositoryFailure(RepositoryIssue.authentication);
+    await _mountRecoveryAccount(tester, repo);
+    await _openRecoveryEdit(tester);
+    final readsBefore = repo.reads;
+    await _save(tester);
+    expect(repo.calls, hasLength(1));
+    expect(repo.calls.single.$2, SaveMode.update);
+    expect(repo.calls.single.$3, 4);
+    expect(repo.reads, readsBefore);
+    expect(find.byType(DocumentsScreen, skipOffstage: false), findsNothing);
+    expect(find.text('Edit Metadata'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byKey(_saveKey)).onPressed, isNull);
+
+    await _tapAndSettle(tester, find.text('Batal'));
+    expect(find.text('Buang perubahan?'), findsOneWidget);
+    await _tapAndSettle(tester, find.text('Lanjut mengedit'));
+    expect(
+      tester
+          .widget<TextFormField>(find.byType(TextFormField).first)
+          .controller!
+          .text,
+      'CV Draft Recovery',
+    );
+    await _tapAndSettle(tester, find.text('Batal'));
+    await _tapAndSettle(tester, find.text('Buang perubahan'));
+    expect(find.text('Edit Metadata'), findsNothing);
+    expect(find.text('Data JobTrail belum dapat dimuat'), findsOneWidget);
+    expect(find.text('Keluar'), findsOneWidget);
+    await _tapAndSettle(tester, find.text('Coba lagi'));
+    expect(repo.reads, readsBefore + 1);
+    expect(repo.calls, hasLength(1));
+    expect(find.text(original.title), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final replaceAccount in [false, true]) {
+    testWidgets(
+      'confirmed update auth-read failure only reloads (replacement=$replaceAccount)',
+      (tester) async {
+        final repo = _DocumentRepository();
+        final documents = [_authRecoveryDocument()];
+        final replacement = FakeJobTrailRepository(() => _snapshot([]));
+        var failRead = false;
+        repo.read = () {
+          if (failRead) {
+            throw const RepositoryFailure(RepositoryIssue.authentication);
+          }
+          return _snapshot(documents);
+        };
+        repo.write = (item, mode, revision) {
+          expect(mode, SaveMode.update);
+          expect(revision, 4);
+          documents[0] = _serverDocument(item, revision: 5);
+          failRead = true;
+          return _receipt(item, revision: 5);
+        };
+        final provider = await _mountRecoveryAccount(
+          tester,
+          repo,
+          replacement: replacement,
+        );
+        await _openRecoveryEdit(tester);
+        final readsBefore = repo.reads;
+        await _save(tester);
+        expect(repo.calls, hasLength(1));
+        expect(repo.reads, readsBefore + 1);
+        expect(find.byType(DocumentsScreen, skipOffstage: false), findsNothing);
+        expect(find.text('Edit Metadata'), findsOneWidget);
+        expect(find.text('Tutup'), findsOneWidget);
+        expect(
+          find.textContaining('Metadata sudah disimpan di server'),
+          findsOneWidget,
+        );
+        expect(
+          tester.widget<FilledButton>(find.byKey(_saveKey)).onPressed,
+          isNull,
+        );
+        final reload = find.byKey(const ValueKey('document-form-refresh'));
+
+        // A second auth failure must preserve the receipt and the retry UI.
+        await _tapAndSettle(tester, reload);
+        expect(repo.reads, readsBefore + 2);
+        expect(repo.calls, hasLength(1));
+        expect(find.text('Tutup'), findsOneWidget);
+        expect(
+          find.textContaining('Metadata sudah disimpan di server'),
+          findsOneWidget,
+        );
+        expect(
+          tester.widget<FilledButton>(find.byKey(_saveKey)).onPressed,
+          isNull,
+        );
+
+        if (replaceAccount) {
+          final pendingRead = Completer<JobTrailSnapshot>();
+          repo.read = () => pendingRead.future;
+          await tester.ensureVisible(reload);
+          await tester.tap(reload);
+          await tester.pump();
+          expect(repo.reads, readsBefore + 3);
+          provider.switchAccount();
+          await tester.pumpAndSettle();
+          expect(repo.disposed, isTrue);
+          expect(find.text('Edit Metadata'), findsNothing);
+          expect(replacement.reads, 1);
+          pendingRead.complete(_snapshot(documents));
+          await tester.pumpAndSettle();
+          await _tapAndSettle(
+            tester,
+            find.byKey(const ValueKey('nav-documents')),
+          );
+          expect(find.text('CV Draft Recovery'), findsNothing);
+          expect(replacement.reads, 1);
+        } else {
+          failRead = false;
+          await _tapAndSettle(tester, reload);
+          expect(repo.reads, readsBefore + 3);
+          expect(find.text('Edit Metadata'), findsNothing);
+          expect(find.text('CV Draft Recovery'), findsOneWidget);
+          final screen = tester.widget<DocumentsScreen>(
+            find.byType(DocumentsScreen),
+          );
+          expect(screen.store.documentRevision(documents.single.id), 5);
+        }
+        expect(repo.calls, hasLength(1));
+        expect(find.byType(SnackBar), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('remote create replays the same immutable intent after timeout', (
     tester,
   ) async {

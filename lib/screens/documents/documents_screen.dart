@@ -870,6 +870,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   AppDocument? _pendingCreate;
   bool _seenPendingCreate = false;
   bool _confirmingDiscard = false;
+  bool _accountRecovery = false;
   late final Listenable _draftChanges;
 
   JobTrailStore get store => widget.store;
@@ -890,6 +891,25 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       mounted &&
       widget.isOwnerActive() &&
       ModalRoute.of(context)?.isActive == true;
+  // The account-scoped Navigator can outlive Documents when authentication
+  // clears the snapshot. Only allow local modal recovery in that case;
+  // submitting or delivering feedback still requires the original owner.
+  bool get _authSnapshotLost =>
+      store.isConnected &&
+      !store.hasSnapshot &&
+      store.failure?.issue == RepositoryIssue.authentication;
+  bool get _recoveringAccount => _accountRecovery || _authSnapshotLost;
+  bool get _canManageCurrentSheet =>
+      _routeCurrent ||
+      (mounted &&
+          _recoveringAccount &&
+          ModalRoute.of(context)?.isCurrent == true);
+  bool get _canManageActiveSheet =>
+      _routeActive ||
+      (mounted &&
+          _recoveringAccount &&
+          ModalRoute.of(context)?.isActive == true);
+
   String get _successMessage => _creating
       ? 'Metadata dokumen ditambahkan.'
       : 'Metadata dokumen diperbarui.';
@@ -938,7 +958,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
   }
 
   Future<void> _requestClose() async {
-    if (_saving || _confirmingDiscard || !_routeCurrent) return;
+    if (_saving || _confirmingDiscard || !_canManageCurrentSheet) return;
     if (!_dirty) {
       Navigator.pop(context);
       return;
@@ -974,7 +994,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       _confirmingDiscard = false;
     }
     if (!mounted) return;
-    if (discard == true && _routeCurrent && !_saving) {
+    if (discard == true && _canManageCurrentSheet && !_saving) {
       Navigator.pop(context);
     }
   }
@@ -1105,7 +1125,11 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
                 child: FilledButton(
                   key: const ValueKey('document-form-save'),
                   onPressed:
-                      _saving || _committed || _needsReview || !_canSubmit
+                      _saving ||
+                          _committed ||
+                          _needsReview ||
+                          _recoveringAccount ||
+                          !_canSubmit
                       ? null
                       : _save,
                   child: Text(
@@ -1199,10 +1223,14 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
       a.notes == b.notes;
 
   Future<void> _refreshSnapshot() async {
-    if (_saving || !_routeCurrent) return;
-    setState(() => _saving = true);
+    if (_saving || !_canManageCurrentSheet) return;
+    setState(() {
+      _accountRecovery |= _authSnapshotLost;
+      _saving = true;
+    });
     await store.refresh();
-    if (!_routeActive) return;
+    if (!_canManageActiveSheet) return;
+    _accountRecovery |= _authSnapshotLost;
     final ready = _canSaveDocuments(store);
     if (_pendingCreate != null && ready) {
       _seenPendingCreate |= store.documentById(_pendingCreate!.id) != null;
@@ -1234,9 +1262,11 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     if (ready &&
         _committed &&
         store.documentById(_committedId!) != null &&
-        _routeCurrent) {
+        _canManageCurrentSheet) {
+      // The original screen may have been destroyed and rebuilt. Do not
+      // deliver a result to it after recovering the account snapshot.
       if (!mounted) return;
-      Navigator.pop(context, _successMessage);
+      Navigator.pop(context, _accountRecovery ? null : _successMessage);
     }
   }
 
@@ -1244,6 +1274,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
     if (_saving ||
         _committed ||
         _needsReview ||
+        _recoveringAccount ||
         !_routeCurrent ||
         !_canSubmit) {
       return;
@@ -1312,12 +1343,13 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
           ? 'Metadata sudah disimpan, tetapi dokumen tidak tersedia '
                 'pada data terbaru.'
           : successMessage;
-      if (!_routeActive) {
+      if (!_canManageActiveSheet) {
         onLateResult(message);
         return;
       }
       // A receipt proves the write committed; never submit this intent again.
       setState(() {
+        _accountRecovery |= _authSnapshotLost;
         _committed = true;
         _committedId = result.receipt.id;
         _pendingCreate = null;
@@ -1330,7 +1362,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         Navigator.pop(context, _successMessage);
       }
     } on RepositoryFailure catch (error) {
-      if (!_routeActive) {
+      if (!_canManageActiveSheet) {
         if (error.issue != RepositoryIssue.authentication) {
           onLateResult(
             error.writeOutcomeUnknown
@@ -1342,6 +1374,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         return;
       }
       setState(() {
+        _accountRecovery |= _authSnapshotLost;
         if (error.writeOutcomeUnknown && _creating) {
           _pendingCreate = item;
           _seenPendingCreate |= store.documentById(item.id) != null;
@@ -1391,7 +1424,7 @@ class _DocumentFormSheetState extends State<_DocumentFormSheet> {
         onLateResult(RepositoryIssue.unexpected.message);
       }
     } finally {
-      if (_routeActive) setState(() => _saving = false);
+      if (_canManageActiveSheet) setState(() => _saving = false);
     }
   }
 }
