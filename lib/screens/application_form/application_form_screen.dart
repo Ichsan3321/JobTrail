@@ -105,6 +105,8 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   ApplicationCreation? _createIntent;
   bool _createOutcomeUnknown = false;
   String? _committedCreateId;
+  // A completed write can wait for this form to own its route again.
+  String? _pendingNavigationId;
 
   // A confirmed receipt is not a guarantee that its record still exists.
   // These states only permit an explicit exit without saved-ID completion.
@@ -244,8 +246,13 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     }
     setState(() => _allowPop = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Use the owning Navigator, never the globally current route by accident.
-      if (_routeCurrent) Navigator.of(context).pop<String>();
+      if (_routeCurrent) {
+        // Use the owning Navigator, never a different top route.
+        Navigator.of(context).pop<String>();
+      } else if (mounted) {
+        // PopScope permission is one-shot: do not leave the dirty form armed.
+        setState(() => _allowPop = false);
+      }
     });
   }
 
@@ -345,7 +352,8 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
             _editExpectedRevision!,
             draft,
           );
-          if (!_routeCurrent) return;
+          // Route coverage only blocks UI/navigation, not receipt capture.
+          if (!mounted) return;
           if (result.receipt.id != id) {
             throw const RepositoryFailure(
               RepositoryIssue.unexpected,
@@ -361,26 +369,33 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
             if (result.snapshotCurrent &&
                 widget.store.applicationById(id) == null) {
               setState(() => _confirmedRecordMissing = true);
-              _showError(
-                'Edit diterima server, tetapi ID hilang dari snapshot. '
-                'Pilih Batal untuk kembali tanpa konfirmasi.',
-              );
+              if (_routeCurrent) {
+                _showError(
+                  'Edit diterima server, tetapi ID hilang dari snapshot. '
+                  'Pilih Batal untuk kembali tanpa konfirmasi.',
+                );
+              }
             } else {
-              _showError(
-                'Perubahan sudah diterima server, tetapi snapshot belum '
-                'memuat revisi terbaru. Tekan Muat ulang; jangan kirim ulang.',
-              );
+              if (_routeCurrent) {
+                _showError(
+                  'Perubahan sudah diterima server, tetapi snapshot belum '
+                  'memuat revisi terbaru. Tekan Muat ulang; jangan kirim ulang.',
+                );
+              }
             }
             return;
           }
         } else {
           final intent = _createIntent ??= ApplicationCreation(draft);
+          // AbsorbPointer does not prevent key events in an already-focused field.
+          FocusManager.instance.primaryFocus?.unfocus();
           if (widget.store.phase == StorePhase.error) {
             await widget.store.refresh();
             if (!_routeCurrent) return;
           }
           final result = await widget.store.createApplicationRemote(intent);
-          if (!_routeCurrent) return;
+          // Preserve confirmed receipts while a temporary route covers S04.
+          if (!mounted) return;
           if (result.receipt.id != intent.id) {
             throw const RepositoryFailure(
               RepositoryIssue.unexpected,
@@ -398,15 +413,19 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
             if (result.snapshotCurrent &&
                 widget.store.applicationById(id) == null) {
               setState(() => _confirmedRecordMissing = true);
-              _showError(
-                'Tambah diterima server, tetapi ID hilang dari snapshot. '
-                'Pilih Batal untuk kembali tanpa konfirmasi.',
-              );
+              if (_routeCurrent) {
+                _showError(
+                  'Tambah diterima server, tetapi ID hilang dari snapshot. '
+                  'Pilih Batal untuk kembali tanpa konfirmasi.',
+                );
+              }
             } else {
-              _showError(
-                'Lamaran sudah diterima server, tetapi data terbaru belum '
-                'tersedia. Tekan Muat ulang; jangan kirim ulang lamaran.',
-              );
+              if (_routeCurrent) {
+                _showError(
+                  'Lamaran sudah diterima server, tetapi data terbaru belum '
+                  'tersedia. Tekan Muat ulang; jangan kirim ulang lamaran.',
+                );
+              }
             }
             return;
           }
@@ -418,7 +437,12 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         id = widget.store.addApplication(draft);
       }
 
-      if (!_routeCurrent) return;
+      if (!mounted) return;
+      if (!_routeCurrent) {
+        // Keep completion available without issuing the mutation again.
+        setState(() => _pendingNavigationId = id);
+        return;
+      }
       _completeNavigation(id);
     } on RepositoryFailure catch (error) {
       if (!_routeCurrent) return;
@@ -663,10 +687,19 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     if (!_routeCurrent) return;
     setState(() {
       _submissionCommitted = true;
+      _pendingNavigationId = id;
       _allowPop = true;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_routeCurrent) _finishNavigation(id);
+      if (_routeCurrent) {
+        _finishNavigation(id);
+      } else if (mounted) {
+        // No foreign pop, no armed PopScope, no permanently busy footer.
+        setState(() {
+          _allowPop = false;
+          _saving = false;
+        });
+      }
     });
   }
 
@@ -675,6 +708,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     if (widget.store.isConnected && widget.store.applicationById(id) == null) {
       setState(() {
         _allowPop = false;
+        _pendingNavigationId = null;
         _confirmedRecordMissing = true;
       });
       _showError(
@@ -687,6 +721,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
       widget.navigation.finishForm(id);
     } catch (_) {
       if (!_routeCurrent) return;
+      setState(() {
+        _allowPop = false;
+        _saving = false;
+      });
       // Retry must not pop a newer route after the form loses ownership.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -694,7 +732,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
           action: SnackBarAction(
             label: 'Coba lagi',
             onPressed: () {
-              if (_routeCurrent) _finishNavigation(id);
+              if (_routeCurrent) _completeNavigation(id);
             },
           ),
         ),
@@ -789,6 +827,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         label: isRequired ? '$label, wajib diisi' : label,
         child: TextFormField(
           controller: controller,
+          readOnly: _formLocked,
           style: const TextStyle(
             color: _navy,
             fontSize: 14,
@@ -1194,6 +1233,8 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                   child: AppButton(
                     label: _saving
                         ? 'Menyimpan...'
+                        : _pendingNavigationId != null
+                        ? 'Lanjut'
                         : (_committedCreateId != null ||
                               _committedEditId != null)
                         ? 'Muat ulang'
@@ -1204,12 +1245,14 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                         : (_isEditing ? 'Simpan Perubahan' : 'Simpan Lamaran'),
                     onPressed: _saving || _allowPop
                         ? null
-                        : ((_committedCreateId != null ||
-                                  _committedEditId != null)
-                              ? _reloadCommittedWrite
-                              : _editNeedsReview
-                              ? _reviewEditServer
-                              : _save),
+                        : _pendingNavigationId != null
+                        ? () => _completeNavigation(_pendingNavigationId!)
+                        : (_committedCreateId != null ||
+                              _committedEditId != null)
+                        ? _reloadCommittedWrite
+                        : _editNeedsReview
+                        ? _reviewEditServer
+                        : _save,
                   ),
                 ),
               ),
@@ -1300,41 +1343,44 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         ),
         body: SafeArea(
           bottom: false,
-          child: AbsorbPointer(
-            absorbing: _formLocked,
-            child: Form(
-              key: _formKey,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 12),
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '*',
-                              style: TextStyle(color: _colors.error),
-                            ),
-                            const TextSpan(
-                              text: ' wajib diisi',
-                              style: TextStyle(color: _gray),
-                            ),
-                          ],
+          child: ExcludeFocus(
+            excluding: _formLocked,
+            child: AbsorbPointer(
+              absorbing: _formLocked,
+              child: Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, bottom: 12),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '*',
+                                style: TextStyle(color: _colors.error),
+                              ),
+                              const TextSpan(
+                                text: ' wajib diisi',
+                                style: TextStyle(color: _gray),
+                              ),
+                            ],
+                          ),
+                          style: const TextStyle(fontSize: 11),
                         ),
-                        style: const TextStyle(fontSize: 11),
                       ),
-                    ),
-                    _informationCard(),
-                    const SizedBox(height: 12),
-                    _workLocationCard(),
-                    const SizedBox(height: 12),
-                    _additionalCard(),
-                  ],
+                      _informationCard(),
+                      const SizedBox(height: 12),
+                      _workLocationCard(),
+                      const SizedBox(height: 12),
+                      _additionalCard(),
+                    ],
+                  ),
                 ),
               ),
             ),
