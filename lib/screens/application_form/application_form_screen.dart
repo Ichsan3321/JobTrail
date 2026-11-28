@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_dates.dart';
 import '../../core/constants/app_tokens.dart';
 import '../../core/routes/app_navigation.dart';
+import '../../data/jobtrail_repository.dart';
 import '../../data/jobtrail_store.dart';
 import '../../models/application.dart';
 import '../../models/recruitment_status.dart';
@@ -65,6 +66,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
     'Glints',
     'Kalibrr',
     'Jobstreet',
+    'Situs perusahaan',
     'Website perusahaan',
     'Referral',
     'Job fair kampus',
@@ -90,13 +92,55 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   bool _submissionCommitted = false;
   bool _sourceInvalid = false;
 
+  // Captured when edit opens. Never silently replace with a newer revision.
+  int? _editExpectedRevision;
+  bool _hadEditingRecord = false;
+  bool _editNeedsReview = false;
+  bool _editOutcomeUnknown = false;
+  ApplicationDraft? _submittedEditDraft;
+  String? _committedEditId;
+  int? _committedEditRevision;
+
+  // Backend create: one immutable ID+draft per intent, even after timeout.
+  ApplicationCreation? _createIntent;
+  bool _createOutcomeUnknown = false;
+  String? _committedCreateId;
+  // A completed write can wait for this form to own its route again.
+  String? _pendingNavigationId;
+
+  // A confirmed receipt is not a guarantee that its record still exists.
+  // These states only permit an explicit exit without saved-ID completion.
+  bool _confirmedRecordMissing = false;
+  bool _matchingServerStateUnconfirmed = false;
+  bool get _safeExitAvailable =>
+      _confirmedRecordMissing || _matchingServerStateUnconfirmed;
+
   bool get _isEditing => widget.applicationId != null;
+  bool get _routeCurrent {
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    final owner = Navigator.maybeOf(context);
+    return route != null &&
+        route.isCurrent &&
+        owner != null &&
+        identical(widget.navigation.navigatorKey.currentState, owner);
+  }
+
+  bool get _formLocked =>
+      _saving ||
+      _submissionCommitted ||
+      (widget.store.isConnected && _createIntent != null) ||
+      _editNeedsReview;
 
   @override
   void initState() {
     super.initState();
     final app = _isEditing
         ? widget.store.applicationById(widget.applicationId!)
+        : null;
+    _hadEditingRecord = app != null;
+    _editExpectedRevision = _isEditing && widget.store.isConnected
+        ? widget.store.applicationRevision(widget.applicationId!)
         : null;
     _company = TextEditingController(text: app?.company ?? '');
     _position = TextEditingController(text: app?.position ?? '');
@@ -139,13 +183,32 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   }
 
   Future<bool> _confirmDiscard() async {
-    if (!_dirty) return true;
+    if (!_dirty && !_safeExitAvailable) return true;
+    final missing = _confirmedRecordMissing;
+    final matchOnly = _matchingServerStateUnconfirmed;
     return await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('Batalkan perubahan?'),
-            content: const Text(
-              'Data yang belum disimpan akan hilang. Yakin ingin keluar?',
+            title: Text(
+              missing
+                  ? 'Lamaran tidak ada di snapshot terbaru'
+                  : matchOnly
+                  ? 'Edit belum terkonfirmasi'
+                  : 'Batalkan perubahan?',
+            ),
+            content: Text(
+              missing
+                  ? 'Server telah menerima permintaan simpan, tetapi ID '
+                        'lamaran tidak ditemukan setelah pembaruan data. '
+                        'Kembali tanpa membuka Board/Detail dan tanpa kirim ulang?'
+                  : matchOnly
+                  ? 'Data server sama dengan draft, tetapi form tidak menerima '
+                        'confirmed receipt. Kembali tanpa menganggap edit berhasil?'
+                  : _createOutcomeUnknown || _editOutcomeUnknown
+                  ? 'Hasil kirim ke server belum pasti. Keluar tidak '
+                        'membatalkan permintaan yang mungkin sudah diterima. '
+                        'Yakin ingin meninggalkan draft?'
+                  : 'Data yang belum disimpan akan hilang. Yakin ingin keluar?',
             ),
             actions: [
               TextButton(
@@ -154,7 +217,11 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Buang perubahan'),
+                child: Text(
+                  _safeExitAvailable
+                      ? 'Kembali tanpa konfirmasi'
+                      : 'Buang perubahan',
+                ),
               ),
             ],
           ),
@@ -164,17 +231,33 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
 
   // A PopScope guard also catches the phone's system-back gesture/button.
   Future<void> _cancel() async {
-    if (_allowPop || _saving || _submissionCommitted) return;
+    if (!_routeCurrent ||
+        _allowPop ||
+        _saving ||
+        (_submissionCommitted && !_safeExitAvailable)) {
+      return;
+    }
     final approved = await _confirmDiscard();
-    if (!approved || !mounted || _saving || _submissionCommitted) return;
+    if (!approved ||
+        !_routeCurrent ||
+        _saving ||
+        (_submissionCommitted && !_safeExitAvailable)) {
+      return;
+    }
     setState(() => _allowPop = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.navigation.back();
+      if (_routeCurrent) {
+        // Use the owning Navigator, never a different top route.
+        Navigator.of(context).pop<String>();
+      } else if (mounted) {
+        // PopScope permission is one-shot: do not leave the dirty form armed.
+        setState(() => _allowPop = false);
+      }
     });
   }
 
   Future<void> _pickDate() async {
-    if (_saving || _submissionCommitted) return;
+    if (_formLocked) return;
     final reference = widget.store.referenceDate;
     final lastDate = DateTime(reference.year, reference.month, reference.day);
     final current = DateTime(_appliedAt.year, _appliedAt.month, _appliedAt.day);
@@ -192,7 +275,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
       lastDate: lastDate,
       initialDate: initialDate,
     );
-    if (selected == null || !mounted || _saving || _submissionCommitted) return;
+    if (selected == null || !mounted || _formLocked) return;
     setState(() {
       _appliedAt = AppDates.date(selected.year, selected.month, selected.day);
       _dirty = true;
@@ -204,78 +287,453 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
 
   String? _validateSalary(String? value) {
     final text = (value ?? '').trim();
+
     if (text.isEmpty) return null;
-    if (!RegExp(r'^\d+$').hasMatch(text) || int.tryParse(text) == null) {
+
+    if (!RegExp(r'^\d+$').hasMatch(text)) {
       return 'Masukkan nominal rupiah tanpa tanda baca.';
     }
+
+    final amount = BigInt.tryParse(text);
+
+    if (amount == null || amount > BigInt.parse('9007199254740991')) {
+      return 'Nominal maksimal Rp9.007.199.254.740.991.';
+    }
+
     return null;
   }
 
-  // A successful store write must be treated as committed even while the next
-  // Navigator frame is pending. Otherwise a second rapid tap can add twice.
+  // W13-019/020: remote writes must use receipts and snapshot reconciliation.
   Future<void> _save() async {
-    if (_saving || _submissionCommitted || _allowPop) return;
-    final formValid = _formKey.currentState?.validate() ?? false;
-    setState(() => _sourceInvalid = _source.trim().isEmpty);
-    if (!formValid || _sourceInvalid) return;
+    if (_saving || _submissionCommitted || _allowPop || _editNeedsReview) {
+      return;
+    }
+    if (_isEditing &&
+        widget.store.isConnected &&
+        _editExpectedRevision == null) {
+      _showError(
+        'Revisi lamaran belum tersedia. Muat ulang data sebelum edit.',
+      );
+      return;
+    }
 
-    final salaryText = _salary.text.trim();
-    final draft = ApplicationDraft(
-      company: _company.text.trim(),
-      position: _position.text.trim(),
-      source: _source.trim(),
-      appliedAt: _appliedAt,
-      status: _status,
-      location: _location.text.trim(),
-      workType: _workType,
-      salary: salaryText.isEmpty ? null : int.parse(salaryText),
-      notes: _notes.text.trim(),
-      documentIds: _documentIds,
-    );
+    final ApplicationDraft draft;
+    if (widget.store.isConnected && !_isEditing && _createIntent != null) {
+      // Retry the identical payload after an ambiguous create failure.
+      draft = _createIntent!.draft;
+    } else {
+      final formValid = _formKey.currentState?.validate() ?? false;
+      setState(() => _sourceInvalid = _source.trim().isEmpty);
+      if (!formValid || _sourceInvalid) return;
+      final salaryText = _salary.text.trim();
+      draft = ApplicationDraft(
+        company: _company.text.trim(),
+        position: _position.text.trim(),
+        source: _source.trim(),
+        appliedAt: _appliedAt,
+        status: _status,
+        location: _location.text.trim(),
+        workType: _workType,
+        salary: salaryText.isEmpty ? null : int.parse(salaryText),
+        notes: _notes.text.trim(),
+        documentIds: List.of(_documentIds),
+      );
+    }
 
     setState(() => _saving = true);
     try {
       final String id;
-      if (_isEditing) {
+      if (widget.store.isConnected) {
+        if (_isEditing) {
+          id = widget.applicationId!;
+          _submittedEditDraft = draft;
+          final result = await widget.store.updateApplicationRemote(
+            id,
+            _editExpectedRevision!,
+            draft,
+          );
+          // Route coverage only blocks UI/navigation, not receipt capture.
+          if (!mounted) return;
+          if (result.receipt.id != id) {
+            throw const RepositoryFailure(
+              RepositoryIssue.unexpected,
+              writeOutcomeUnknown: true,
+            );
+          }
+          setState(() {
+            _committedEditId = id;
+            _committedEditRevision = result.receipt.revision;
+            _submissionCommitted = true;
+          });
+          if (!result.snapshotCurrent || !_editReceiptVisible(id)) {
+            if (result.snapshotCurrent &&
+                widget.store.applicationById(id) == null) {
+              setState(() => _confirmedRecordMissing = true);
+              if (_routeCurrent) {
+                _showError(
+                  'Edit diterima server, tetapi ID hilang dari snapshot. '
+                  'Pilih Batal untuk kembali tanpa konfirmasi.',
+                );
+              }
+            } else {
+              if (_routeCurrent) {
+                _showError(
+                  'Perubahan sudah diterima server, tetapi snapshot belum '
+                  'memuat revisi terbaru. Tekan Muat ulang; jangan kirim ulang.',
+                );
+              }
+            }
+            return;
+          }
+        } else {
+          final intent = _createIntent ??= ApplicationCreation(draft);
+          // AbsorbPointer does not prevent key events in an already-focused field.
+          FocusManager.instance.primaryFocus?.unfocus();
+          if (widget.store.phase == StorePhase.error) {
+            await widget.store.refresh();
+            if (!_routeCurrent) return;
+          }
+          final result = await widget.store.createApplicationRemote(intent);
+          // Preserve confirmed receipts while a temporary route covers S04.
+          if (!mounted) return;
+          if (result.receipt.id != intent.id) {
+            throw const RepositoryFailure(
+              RepositoryIssue.unexpected,
+              writeOutcomeUnknown: true,
+            );
+          }
+          id = result.receipt.id;
+          setState(() {
+            _committedCreateId = id;
+            _submissionCommitted = true;
+            _createOutcomeUnknown = false;
+          });
+          if (!result.snapshotCurrent ||
+              widget.store.applicationById(id) == null) {
+            if (result.snapshotCurrent &&
+                widget.store.applicationById(id) == null) {
+              setState(() => _confirmedRecordMissing = true);
+              if (_routeCurrent) {
+                _showError(
+                  'Tambah diterima server, tetapi ID hilang dari snapshot. '
+                  'Pilih Batal untuk kembali tanpa konfirmasi.',
+                );
+              }
+            } else {
+              if (_routeCurrent) {
+                _showError(
+                  'Lamaran sudah diterima server, tetapi data terbaru belum '
+                  'tersedia. Tekan Muat ulang; jangan kirim ulang lamaran.',
+                );
+              }
+            }
+            return;
+          }
+        }
+      } else if (_isEditing) {
         id = widget.applicationId!;
         widget.store.updateApplication(id, draft);
       } else {
         id = widget.store.addApplication(draft);
       }
+
       if (!mounted) return;
-      setState(() {
-        _submissionCommitted = true;
-        _allowPop = true;
-      });
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _finishNavigation(id),
-      );
+      if (!_routeCurrent) {
+        // Keep completion available without issuing the mutation again.
+        setState(() => _pendingNavigationId = id);
+        return;
+      }
+      _completeNavigation(id);
+    } on RepositoryFailure catch (error) {
+      if (!_routeCurrent) return;
+      if (widget.store.isConnected && _isEditing) {
+        if (error.writeOutcomeUnknown ||
+            error.issue == RepositoryIssue.revisionConflict ||
+            error.issue == RepositoryIssue.unavailable ||
+            error.issue == RepositoryIssue.documentUnavailable) {
+          setState(() {
+            _editNeedsReview = true;
+            _editOutcomeUnknown = error.writeOutcomeUnknown;
+          });
+        }
+        _showError(
+          error.writeOutcomeUnknown
+              ? 'Hasil edit belum pasti. Draft tetap aman. '
+                    'Tekan Periksa server sebelum mencoba lagi.'
+              : error.issue.message,
+        );
+      } else {
+        if (widget.store.isConnected) {
+          if (error.writeOutcomeUnknown) {
+            _createOutcomeUnknown = true;
+          } else if (!_createOutcomeUnknown) {
+            _createIntent = null;
+          }
+        }
+        _showError(
+          error.writeOutcomeUnknown
+              ? 'Hasil simpan belum pasti. Draft dan ID dipertahankan. '
+                    'Tekan Coba lagi saat koneksi pulih.'
+              : error.issue.message,
+        );
+      }
     } on ArgumentError catch (error) {
-      if (mounted) _showError(error.message?.toString() ?? error.toString());
+      if (_routeCurrent) {
+        _showError(error.message?.toString() ?? error.toString());
+      }
     } on StateError catch (error) {
-      if (mounted) _showError(error.message);
-    } catch (error) {
-      if (mounted) _showError('Gagal menyimpan lamaran: $error');
+      if (_routeCurrent) {
+        _showError(error.message);
+      }
+    } catch (_) {
+      if (!_routeCurrent) return;
+      if (widget.store.isConnected && _isEditing) {
+        setState(() {
+          _editNeedsReview = true;
+          _editOutcomeUnknown = true;
+        });
+        _showError(
+          'Hasil edit belum pasti. Periksa server sebelum mencoba lagi.',
+        );
+      } else if (widget.store.isConnected) {
+        _createOutcomeUnknown = true;
+        _showError(
+          'Status penyimpanan belum pasti. Coba lagi dengan ID yang sama.',
+        );
+      } else {
+        _showError('Gagal menyimpan lamaran. Silakan coba lagi.');
+      }
     } finally {
-      // Only a failed store write may unlock the Save button. A successful
-      // write remains locked until the form route has finished popping.
-      if (mounted && !_submissionCommitted) setState(() => _saving = false);
+      if (mounted && !_allowPop) setState(() => _saving = false);
     }
   }
 
+  bool _editReceiptVisible(String id) {
+    final revision = widget.store.applicationRevision(id);
+    return widget.store.applicationById(id) != null &&
+        revision != null &&
+        _committedEditRevision != null &&
+        revision >= _committedEditRevision!;
+  }
+
+  Future<void> _reloadCommittedWrite() async {
+    final id = _committedCreateId ?? _committedEditId;
+    if (id == null || _saving || _allowPop) return;
+    setState(() => _saving = true);
+    try {
+      await widget.store.refresh();
+      if (!_routeCurrent) return;
+      if (widget.store.phase != StorePhase.error &&
+          widget.store.applicationById(id) == null) {
+        setState(() => _confirmedRecordMissing = true);
+        _showError(
+          'ID lamaran tidak ditemukan setelah refresh. '
+          'Pilih Batal untuk kembali tanpa konfirmasi; jangan kirim ulang.',
+        );
+        return;
+      }
+      final isReady =
+          widget.store.phase != StorePhase.error &&
+          (_committedEditId != null
+              ? _editReceiptVisible(id)
+              : widget.store.applicationById(id) != null);
+      if (isReady) {
+        _completeNavigation(id);
+      } else {
+        _showError(
+          widget.store.failure?.issue.message ?? 'Data server belum terbarui. Tekan Muat ulang untuk mencoba lagi.',
+        );
+      }
+    } catch (_) {
+      if (_routeCurrent) {
+        _showError('Belum bisa memuat data terbaru. Coba lagi.');
+      }
+    } finally {
+      if (mounted && !_allowPop) setState(() => _saving = false);
+    }
+  }
+
+  // On ambiguous edit / revision conflict, reconcile before ever retrying.
+  Future<void> _reviewEditServer() async {
+    if (!_isEditing || !_editNeedsReview || _saving) return;
+    final id = widget.applicationId!;
+    setState(() => _saving = true);
+    try {
+      await widget.store.refresh();
+      if (!_routeCurrent) return;
+      final server = widget.store.applicationById(id);
+      final revision = widget.store.applicationRevision(id);
+      if (widget.store.phase == StorePhase.error ||
+          server == null ||
+          revision == null) {
+        _showError(
+          widget.store.failure?.issue.message ??
+              'Versi server tidak tersedia. Draft tetap disimpan di form.',
+        );
+        return;
+      }
+      if (revision == _editExpectedRevision) {
+        // No revision change in a refreshed snapshot: user may explicitly retry.
+        setState(() {
+          _editNeedsReview = false;
+          _editOutcomeUnknown = false;
+        });
+        _showError(
+          'Revisi server belum berubah. Tinjau draft lalu simpan ulang.',
+        );
+        return;
+      }
+      if (_submittedEditDraft != null &&
+          _sameApplicationDraft(server, _submittedEditDraft!)) {
+        // Identical payload is evidence of state, NOT a confirmed receipt.
+        // It could be another actor's edit (including JT002 conflicts).
+        setState(() => _matchingServerStateUnconfirmed = true);
+        _showError(
+          'Snapshot sama dengan draft, tetapi receipt edit tidak terkonfirmasi. '
+          'Pilih Batal untuk kembali tanpa konfirmasi.',
+        );
+        return;
+      }
+
+      if (!mounted) {
+        return;
+      }
+      final decision = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Versi server telah berubah'),
+          content: Text(
+            'Draft Anda tetap ada. Revisi saat form dibuka: '
+            '${_editExpectedRevision ?? '-'}, revisi server: $revision.\n\n'
+            'Versi server: ${server.company} — ${server.position} '
+            '(${server.source}).\n\n'
+            'Memilih Simpan draft saya akan memakai revisi baru saat '
+            'Anda menekan Simpan lagi, dan dapat menimpa perubahan server.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Pertahankan draft'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(dialogContext, 'server'),
+              child: const Text('Muat versi server'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'draft'),
+              child: const Text('Simpan draft saya'),
+            ),
+          ],
+        ),
+      );
+      if (!_routeCurrent) return;
+      if (decision == 'server') {
+        _company.text = server.company;
+        _position.text = server.position;
+        _location.text = server.location;
+        _salary.text = server.salary?.toString() ?? '';
+        _notes.text = server.notes;
+        setState(() {
+          _source = server.source;
+          _appliedAt = server.appliedAt;
+          _status = server.status;
+          _workType = server.workType;
+          _documentIds = List.of(server.documentIds);
+          _editExpectedRevision = revision;
+          _submittedEditDraft = null;
+          _editNeedsReview = false;
+          _editOutcomeUnknown = false;
+          _matchingServerStateUnconfirmed = false;
+          _dirty = false;
+        });
+      } else if (decision == 'draft') {
+        // Explicit opt-in only; never silently swap the captured revision.
+        setState(() {
+          _editExpectedRevision = revision;
+          _editNeedsReview = false;
+          _editOutcomeUnknown = false;
+          _matchingServerStateUnconfirmed = false;
+        });
+        _showError('Draft dipertahankan. Tekan Simpan Perubahan untuk lanjut.');
+      }
+    } catch (_) {
+      if (_routeCurrent) {
+        _showError('Gagal memeriksa server. Draft tetap ada.');
+      }
+    } finally {
+      if (mounted && !_allowPop) setState(() => _saving = false);
+    }
+  }
+
+  bool _sameApplicationDraft(Application app, ApplicationDraft draft) {
+    final remoteIds = app.documentIds.toSet();
+    final draftIds = draft.documentIds.toSet();
+    return app.company == draft.company &&
+        app.position == draft.position &&
+        app.source == draft.source &&
+        app.appliedAt.year == draft.appliedAt.year &&
+        app.appliedAt.month == draft.appliedAt.month &&
+        app.appliedAt.day == draft.appliedAt.day &&
+        app.status == draft.status &&
+        app.location == draft.location &&
+        app.workType == draft.workType &&
+        app.salary == draft.salary &&
+        app.notes == draft.notes &&
+        remoteIds.length == draftIds.length &&
+        remoteIds.containsAll(draftIds);
+  }
+
+  void _completeNavigation(String id) {
+    if (!_routeCurrent) return;
+    setState(() {
+      _submissionCommitted = true;
+      _pendingNavigationId = id;
+      _allowPop = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_routeCurrent) {
+        _finishNavigation(id);
+      } else if (mounted) {
+        // No foreign pop, no armed PopScope, no permanently busy footer.
+        setState(() {
+          _allowPop = false;
+          _saving = false;
+        });
+      }
+    });
+  }
+
   void _finishNavigation(String id) {
-    if (!mounted) return;
+    if (!_routeCurrent || !_submissionCommitted) return;
+    if (widget.store.isConnected && widget.store.applicationById(id) == null) {
+      setState(() {
+        _allowPop = false;
+        _pendingNavigationId = null;
+        _confirmedRecordMissing = true;
+      });
+      _showError(
+        'ID lamaran tidak ditemukan. Kembali tanpa konfirmasi '
+        'atau tekan Muat ulang.',
+      );
+      return;
+    }
     try {
       widget.navigation.finishForm(id);
-    } catch (error) {
-      // A commit already happened; allowing Save again would create a duplicate.
-      // Offer navigation retry without writing to the store a second time.
+    } catch (_) {
+      if (!_routeCurrent) return;
+      setState(() {
+        _allowPop = false;
+        _saving = false;
+      });
+      // Retry must not pop a newer route after the form loses ownership.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Lamaran tersimpan, tetapi gagal kembali.'),
           action: SnackBarAction(
             label: 'Coba lagi',
-            onPressed: () => _finishNavigation(id),
+            onPressed: () {
+              if (_routeCurrent) _completeNavigation(id);
+            },
           ),
         ),
       );
@@ -369,6 +827,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         label: isRequired ? '$label, wajib diisi' : label,
         child: TextFormField(
           controller: controller,
+          readOnly: _formLocked,
           style: const TextStyle(
             color: _navy,
             fontSize: 14,
@@ -480,11 +939,13 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               side: BorderSide(color: _source == source ? _primary : _border),
               shape: const StadiumBorder(),
               padding: const EdgeInsets.symmetric(horizontal: 6),
-              onSelected: (_) => setState(() {
-                _source = source;
-                _sourceInvalid = false;
-                _dirty = true;
-              }),
+              onSelected: _formLocked
+                  ? null
+                  : (_) => setState(() {
+                      _source = source;
+                      _sourceInvalid = false;
+                      _dirty = true;
+                    }),
             ),
         ],
       ),
@@ -555,10 +1016,12 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                 PopupMenuButton<RecruitmentStatus>(
                   key: const ValueKey('form-status-picker'),
                   initialValue: _status,
-                  onSelected: (value) => setState(() {
-                    _status = value;
-                    _dirty = true;
-                  }),
+                  onSelected: _formLocked
+                      ? null
+                      : (value) => setState(() {
+                          _status = value;
+                          _dirty = true;
+                        }),
                   itemBuilder: (_) => [
                     for (final value in RecruitmentStatus.values)
                       PopupMenuItem(
@@ -602,7 +1065,7 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
   );
 
   void _selectWorkType(WorkType type) {
-    if (_saving || _submissionCommitted) return;
+    if (_formLocked) return;
     setState(() {
       _workType = type;
       _dirty = true;
@@ -641,10 +1104,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                   button: true,
                   selected: _workType == type,
                   label: 'Tipe kerja ${type.label}',
-                  onTap: _saving ? null : () => _selectWorkType(type),
+                  onTap: _formLocked ? null : () => _selectWorkType(type),
                   child: InkWell(
                     excludeFromSemantics: true,
-                    onTap: _saving ? null : () => _selectWorkType(type),
+                    onTap: _formLocked ? null : () => _selectWorkType(type),
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
                       constraints: const BoxConstraints(minHeight: 44),
@@ -703,14 +1166,16 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               FilterChip(
                 label: Text(doc.title),
                 selected: _documentIds.contains(doc.id),
-                onSelected: (selected) => setState(() {
-                  if (selected) {
-                    _documentIds.add(doc.id);
-                  } else {
-                    _documentIds.remove(doc.id);
-                  }
-                  _dirty = true;
-                }),
+                onSelected: _formLocked
+                    ? null
+                    : (selected) => setState(() {
+                        if (selected) {
+                          _documentIds.add(doc.id);
+                        } else {
+                          _documentIds.remove(doc.id);
+                        }
+                        _dirty = true;
+                      }),
               ),
           ],
         ),
@@ -733,7 +1198,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               width: 112,
               height: 48,
               child: OutlinedButton(
-                onPressed: _saving ? null : _cancel,
+                onPressed:
+                    (_saving || (_submissionCommitted && !_safeExitAvailable))
+                    ? null
+                    : _cancel,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: _navy,
                   side: const BorderSide(color: _border),
@@ -765,8 +1233,26 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
                   child: AppButton(
                     label: _saving
                         ? 'Menyimpan...'
+                        : _pendingNavigationId != null
+                        ? 'Lanjut'
+                        : (_committedCreateId != null ||
+                              _committedEditId != null)
+                        ? 'Muat ulang'
+                        : _editNeedsReview
+                        ? 'Periksa server'
+                        : _createOutcomeUnknown
+                        ? 'Coba lagi'
                         : (_isEditing ? 'Simpan Perubahan' : 'Simpan Lamaran'),
-                    onPressed: _saving ? null : _save,
+                    onPressed: _saving || _allowPop
+                        ? null
+                        : _pendingNavigationId != null
+                        ? () => _completeNavigation(_pendingNavigationId!)
+                        : (_committedCreateId != null ||
+                              _committedEditId != null)
+                        ? _reloadCommittedWrite
+                        : _editNeedsReview
+                        ? _reviewEditServer
+                        : _save,
                   ),
                 ),
               ),
@@ -779,8 +1265,9 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // The screen can outlive its entity if another route deletes it.
+    // After a remote conflict/deletion, keep the already-open draft visible.
     if (_isEditing &&
+        !_hadEditingRecord &&
         widget.store.applicationById(widget.applicationId!) == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Edit Lamaran')),
@@ -812,7 +1299,10 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
               Tooltip(
                 message: 'Kembali',
                 child: OutlinedButton(
-                  onPressed: _saving ? null : _cancel,
+                  onPressed:
+                      (_saving || (_submissionCommitted && !_safeExitAvailable))
+                      ? null
+                      : _cancel,
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(48, 48),
                     maximumSize: const Size(48, 48),
@@ -853,41 +1343,44 @@ class _ApplicationFormScreenState extends State<ApplicationFormScreen> {
         ),
         body: SafeArea(
           bottom: false,
-          child: AbsorbPointer(
-            absorbing: _saving,
-            child: Form(
-              key: _formKey,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 12),
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '*',
-                              style: TextStyle(color: _colors.error),
-                            ),
-                            const TextSpan(
-                              text: ' wajib diisi',
-                              style: TextStyle(color: _gray),
-                            ),
-                          ],
+          child: ExcludeFocus(
+            excluding: _formLocked,
+            child: AbsorbPointer(
+              absorbing: _formLocked,
+              child: Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, bottom: 12),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '*',
+                                style: TextStyle(color: _colors.error),
+                              ),
+                              const TextSpan(
+                                text: ' wajib diisi',
+                                style: TextStyle(color: _gray),
+                              ),
+                            ],
+                          ),
+                          style: const TextStyle(fontSize: 11),
                         ),
-                        style: const TextStyle(fontSize: 11),
                       ),
-                    ),
-                    _informationCard(),
-                    const SizedBox(height: 12),
-                    _workLocationCard(),
-                    const SizedBox(height: 12),
-                    _additionalCard(),
-                  ],
+                      _informationCard(),
+                      const SizedBox(height: 12),
+                      _workLocationCard(),
+                      const SizedBox(height: 12),
+                      _additionalCard(),
+                    ],
+                  ),
                 ),
               ),
             ),
